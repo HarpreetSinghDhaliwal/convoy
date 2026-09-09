@@ -66,9 +66,16 @@ export function useTripChat(
     if (looksLikeContactOrPaymentInfo(trimmed)) {
       return { blocked: true };
     }
+
+    // In 1-on-1 mode, recipientId is strictly required. Never fall back to null (which is group broadcast).
+    if (!isGroup && !partnerId) {
+      console.warn("useTripChat: Cannot send 1-on-1 message without partnerId");
+      return { blocked: false };
+    }
+
     setSending(true);
     try {
-      const recipientId = isGroup ? null : partnerId;
+      const recipientId = isGroup ? null : (partnerId ?? null);
       await sendMessage(tripId, session.user.id, trimmed, recipientId);
       return { blocked: false };
     } finally {

@@ -56,8 +56,10 @@ export function ChatScreen() {
       setIsGroupMode(false);
     } else if (initialIsGroup === "true") {
       setIsGroupMode(true);
+    } else if (!isHost && trip?.leadId && !selectedPartnerId) {
+      setSelectedPartnerId(trip.leadId);
     }
-  }, [initialPartnerId, initialIsGroup]);
+  }, [initialPartnerId, initialIsGroup, isHost, trip?.leadId, selectedPartnerId]);
 
   // Approved members list for host selection
   const [approvedMembers, setApprovedMembers] = useState<
@@ -152,18 +154,6 @@ export function ChatScreen() {
 
   const draftLooksFlagged = draft.length > 0 && looksLikeContactOrPaymentInfo(draft);
 
-  async function handleSend(customText?: string) {
-    const text = (customText || draft).trim();
-    if (!text) return;
-    setBlockedNotice(false);
-    const result = await send(text);
-    if (result.blocked) {
-      setBlockedNotice(true);
-      return;
-    }
-    if (!customText) setDraft("");
-  }
-
   const partnerInfo = activePartnerId ? memberMap.get(activePartnerId) : undefined;
   const hostInfo = trip?.leadId ? memberMap.get(trip.leadId) : undefined;
 
@@ -181,6 +171,19 @@ export function ChatScreen() {
   // In Open Discussion mode, everyone approved can post.
   const canPostInGroup = isHost || groupChatEnabled;
   const canSendMessages = !isGroupMode || canPostInGroup;
+
+  async function handleSend(customText?: string) {
+    if (!canSendMessages) return;
+    const text = (customText || draft).trim();
+    if (!text) return;
+    setBlockedNotice(false);
+    const result = await send(text);
+    if (result.blocked) {
+      setBlockedNotice(true);
+      return;
+    }
+    if (!customText) setDraft("");
+  }
 
   function renderMessage({ item }: { item: Message }) {
     const isMine = item.senderId === session?.user.id;
