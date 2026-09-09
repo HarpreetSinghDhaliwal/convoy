@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Screen, Button, Card, Badge, Stepper, TextField, DateTimePicker } from "@/components";
 import { colors, radius, shadows, spacing, typography } from "@/theme";
 import { useAuthSession } from "@/modules/auth";
 import { useKycStatus } from "@/modules/kyc";
 import { usePendingRatings } from "@/modules/ratings";
-import { MapPicker, useRoute, saveTripRoute } from "@/modules/routing";
+import { TripRouteMap, useRoute, useGeocodeSearch, saveTripRoute } from "@/modules/routing";
 import type { GeocodeResult } from "@/modules/routing";
 import { looksLikeContactOrPaymentInfo } from "@/lib/contentSafety/contactInfoDetector";
 import { createTrip } from "../services/tripService";
@@ -21,6 +21,15 @@ export function CreateTripScreen() {
   const [destination, setDestination] = useState("");
   const [origin, setOrigin] = useState<GeocodeResult | null>(null);
   const [destinationPoint, setDestinationPoint] = useState<GeocodeResult | null>(null);
+  const [activePinMode, setActivePinMode] = useState<"origin" | "destination">("origin");
+
+  // Geocoding autocompletions for pickup & destination
+  const originGeocode = useGeocodeSearch();
+  const destGeocode = useGeocodeSearch();
+  const [focusedInput, setFocusedInput] = useState<"origin" | "dest" | null>(null);
+  const [originInputText, setOriginInputText] = useState("");
+  const [destInputText, setDestInputText] = useState("");
+
   const { route, loading: routeLoading, error: routeError } = useRoute(origin, destinationPoint);
   const [departAt, setDepartAt] = useState(new Date());
   const [isRoundTrip, setIsRoundTrip] = useState(false);
@@ -138,19 +147,159 @@ export function CreateTripScreen() {
             label="Destination Name"
             placeholder="e.g. Manali, Kasol, Spiti Valley"
             value={destination}
-            onChangeText={setDestination}
+            onChangeText={(t) => {
+              setDestination(t);
+              if (!destInputText) setDestInputText(t);
+            }}
             leftIcon={<Text style={styles.inputEmoji}>📍</Text>}
           />
 
-          <Text style={styles.mapLabel}>Pickup Point (Tap map to drop pin)</Text>
-          <MapPicker value={origin} onChange={setOrigin} />
+          {/* Location Autocomplete Inputs */}
+          <View style={styles.locationsSearchBox}>
+            {/* Pickup Input */}
+            <View style={styles.locationInputRow}>
+              <Text style={styles.locationInputDotOrigin}>📍</Text>
+              <TextInput
+                style={styles.locationTextInput}
+                placeholder="Search pickup area, sector or city..."
+                placeholderTextColor={colors.inkSubtle}
+                value={origin ? origin.label : originInputText}
+                onFocus={() => {
+                  setFocusedInput("origin");
+                  if (originInputText.trim()) originGeocode.search(originInputText);
+                }}
+                onChangeText={(t) => {
+                  setOriginInputText(t);
+                  if (origin) setOrigin(null);
+                  setFocusedInput("origin");
+                  originGeocode.search(t);
+                }}
+              />
+              {origin || originInputText ? (
+                <Pressable
+                  onPress={() => {
+                    setOrigin(null);
+                    setOriginInputText("");
+                    setFocusedInput(null);
+                  }}
+                  style={styles.clearBtn}
+                >
+                  <Text style={styles.clearBtnText}>✕</Text>
+                </Pressable>
+              ) : null}
+            </View>
 
-          <Text style={styles.mapLabel}>Destination Point (Tap map to drop pin)</Text>
-          <MapPicker value={destinationPoint} onChange={setDestinationPoint} />
+            {/* Suggestions for Pickup */}
+            {focusedInput === "origin" && (originGeocode.searching || originGeocode.results.length > 0) && (
+              <View style={styles.createSuggestionsBox}>
+                {originGeocode.results.map((item, idx) => (
+                  <Pressable
+                    key={`${item.lat}-${item.lng}-${idx}`}
+                    style={styles.createSuggestionItem}
+                    onPress={() => {
+                      setOrigin(item);
+                      setOriginInputText(item.label);
+                      setFocusedInput(null);
+                    }}
+                  >
+                    <Text style={styles.createSuggestionIcon}>📍</Text>
+                    <Text style={styles.createSuggestionText} numberOfLines={1}>
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+
+            <View style={styles.locationDivider} />
+
+            {/* Destination Point Input */}
+            <View style={styles.locationInputRow}>
+              <Text style={styles.locationInputDotDest}>🎯</Text>
+              <TextInput
+                style={styles.locationTextInput}
+                placeholder="Search destination pinpoint (e.g. Old Manali, Kasol)..."
+                placeholderTextColor={colors.inkSubtle}
+                value={destinationPoint ? destinationPoint.label : destInputText}
+                onFocus={() => {
+                  setFocusedInput("dest");
+                  if (destInputText.trim()) destGeocode.search(destInputText);
+                }}
+                onChangeText={(t) => {
+                  setDestInputText(t);
+                  if (destinationPoint) setDestinationPoint(null);
+                  setFocusedInput("dest");
+                  destGeocode.search(t);
+                }}
+              />
+              {destinationPoint || destInputText ? (
+                <Pressable
+                  onPress={() => {
+                    setDestinationPoint(null);
+                    setDestInputText("");
+                    setFocusedInput(null);
+                  }}
+                  style={styles.clearBtn}
+                >
+                  <Text style={styles.clearBtnText}>✕</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            {/* Suggestions for Destination */}
+            {focusedInput === "dest" && (destGeocode.searching || destGeocode.results.length > 0) && (
+              <View style={styles.createSuggestionsBox}>
+                {destGeocode.results.map((item, idx) => (
+                  <Pressable
+                    key={`${item.lat}-${item.lng}-${idx}`}
+                    style={styles.createSuggestionItem}
+                    onPress={() => {
+                      setDestinationPoint(item);
+                      setDestInputText(item.label);
+                      setFocusedInput(null);
+                    }}
+                  >
+                    <Text style={styles.createSuggestionIcon}>🎯</Text>
+                    <Text style={styles.createSuggestionText} numberOfLines={1}>
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {/* Single Consolidated Route Map */}
+          <View style={styles.singleMapContainer}>
+            <Text style={styles.mapInstruction}>
+              🗺️ Single Journey Map · Tap on map to set or move your pins
+            </Text>
+            <TripRouteMap
+              origin={origin}
+              destination={destinationPoint}
+              checkpoints={checkpoints.map((c) => ({ lat: c.lat, lng: c.lng, label: c.label }))}
+              routeGeometry={route?.geometry}
+              distanceKm={route?.distanceKm}
+              durationMin={route?.durationMin}
+              height={320}
+              interactive={true}
+              activePinMode={activePinMode}
+              onActivePinModeChange={setActivePinMode}
+              onPointChange={(mode, point) => {
+                if (mode === "origin") {
+                  setOrigin(point);
+                  setOriginInputText(point.label);
+                } else {
+                  setDestinationPoint(point);
+                  setDestInputText(point.label);
+                }
+              }}
+            />
+          </View>
 
           {routeLoading && (
             <View style={styles.calculatingBox}>
-              <Text style={styles.calculatingText}>⏳ Calculating optimal driving route…</Text>
+              <Text style={styles.calculatingText}>⏳ Calculating driving path and duration…</Text>
             </View>
           )}
 
@@ -371,6 +520,82 @@ const styles = StyleSheet.create({
   fieldLabel: {
     ...typography.captionBold,
     color: colors.inkMuted,
+    marginBottom: spacing.xs,
+  },
+  locationsSearchBox: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.lg,
+    padding: spacing.sm,
+    marginVertical: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+  },
+  locationInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.xs,
+  },
+  locationInputDotOrigin: {
+    fontSize: 14,
+    marginRight: spacing.xs,
+  },
+  locationInputDotDest: {
+    fontSize: 14,
+    marginRight: spacing.xs,
+  },
+  locationTextInput: {
+    flex: 1,
+    ...typography.bodyMedium,
+    color: colors.ink,
+    paddingVertical: 6,
+  },
+  locationDivider: {
+    height: 1,
+    backgroundColor: colors.lineLight,
+    marginVertical: spacing.xs,
+  },
+  clearBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  clearBtnText: {
+    fontSize: 13,
+    color: colors.inkSubtle,
+  },
+  createSuggestionsBox: {
+    marginTop: spacing.xs,
+    backgroundColor: colors.paper,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+    padding: 4,
+    ...shadows.sm,
+  },
+  createSuggestionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.lineLight,
+  },
+  createSuggestionIcon: {
+    fontSize: 13,
+    marginRight: spacing.xs,
+  },
+  createSuggestionText: {
+    ...typography.captionBold,
+    color: colors.ink,
+    flex: 1,
+    fontSize: 12,
+  },
+  singleMapContainer: {
+    marginVertical: spacing.sm,
+  },
+  mapInstruction: {
+    ...typography.captionBold,
+    color: colors.inkSoft,
+    fontSize: 11.5,
     marginBottom: spacing.xs,
   },
   calculatingBox: {

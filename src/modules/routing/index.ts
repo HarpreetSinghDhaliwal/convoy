@@ -1,4 +1,5 @@
 export { MapPicker } from "./components/MapPicker";
+export { TripRouteMap } from "./components/TripRouteMap";
 export { OverlappingTripsList } from "./components/OverlappingTripsList";
 export { useRoute } from "./hooks/useRoute";
 export { useGeocodeSearch } from "./hooks/useGeocodeSearch";

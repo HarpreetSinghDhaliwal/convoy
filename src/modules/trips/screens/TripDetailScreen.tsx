@@ -10,7 +10,7 @@ import { usePendingRatings } from "@/modules/ratings";
 import { ReportDialog } from "@/modules/safety";
 import { PickupPointManager, PickupPointSelector } from "@/modules/pickup-points";
 import { ContactPhoneReveal } from "@/modules/profile";
-import { OverlappingTripsList } from "@/modules/routing";
+import { OverlappingTripsList, TripRouteMap } from "@/modules/routing";
 import { useTripDetail } from "../hooks/useTripDetail";
 import { useMyMemberships } from "../hooks/useMyMemberships";
 import { useCheckpoints } from "../hooks/useCheckpoints";
@@ -198,6 +198,29 @@ export function TripDetailScreen() {
         {/* Route Details Card */}
         <Card style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Journey Route</Text>
+
+          {/* Unified Route Map with Start, Checkpoints, Destination & Driving Path */}
+          <View style={styles.detailMapWrap}>
+            <TripRouteMap
+              origin={{
+                lat: trip.originLat,
+                lng: trip.originLng,
+                label: trip.originLabel,
+              }}
+              destination={{
+                lat: trip.destinationLat,
+                lng: trip.destinationLng,
+                label: trip.destination,
+              }}
+              checkpoints={checkpoints.map((c) => ({
+                lat: c.lat,
+                lng: c.lng,
+                label: c.label,
+              }))}
+              height={260}
+              interactive={false}
+            />
+          </View>
 
           <View style={styles.timelineRow}>
             <View style={styles.timelineIndicator}>
@@ -547,6 +570,9 @@ const styles = StyleSheet.create({
     ...typography.h2,
     color: colors.ink,
     marginBottom: spacing.md,
+  },
+  detailMapWrap: {
+    marginBottom: spacing.lg,
   },
   timelineRow: {
     flexDirection: "row",
