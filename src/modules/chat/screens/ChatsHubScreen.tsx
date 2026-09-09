@@ -17,13 +17,15 @@ export function ChatsHubScreen() {
   function handleOpenTripChat(chat: ActiveTripChat) {
     setChatLastRead(chat.chatId, Date.now());
     refresh();
+    const params: { id: string; partnerId?: string; isGroup?: string } = { id: chat.tripId };
+    if (chat.isGroup) {
+      params.isGroup = "true";
+    } else if (chat.partnerId) {
+      params.partnerId = chat.partnerId;
+    }
     router.push({
       pathname: "/trips/[id]/chat",
-      params: {
-        id: chat.tripId,
-        partnerId: chat.partnerId ?? "",
-        isGroup: chat.isGroup ? "true" : "false",
-      },
+      params,
     });
   }
 

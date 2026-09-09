@@ -396,7 +396,7 @@ export function TripDetailScreen() {
                         onPress={() =>
                           router.push({
                             pathname: "/trips/[id]/chat",
-                            params: { id: trip.id, partnerId: p.id, isGroup: "false" },
+                            params: { id: trip.id, partnerId: p.id },
                           })
                         }
                         variant="primary"
@@ -452,7 +452,7 @@ export function TripDetailScreen() {
                   onPress={() =>
                     router.push({
                       pathname: "/trips/[id]/chat",
-                      params: { id: trip.id, partnerId: trip.leadId, isGroup: "false" },
+                      params: { id: trip.id, partnerId: trip.leadId },
                     })
                   }
                   variant="primary"
