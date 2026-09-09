@@ -147,26 +147,142 @@ export async function listCheckpoints(tripId: string): Promise<TripCheckpoint[]>
   return (data ?? []).map(rowToCheckpoint);
 }
 
+export function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) *
+      Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 export async function listTrips(filters: TripFilters = {}): Promise<Trip[]> {
   let query = supabase.from("trips").select().eq("published", true).is("cancelled_at", null);
 
-  if (filters.destination && filters.destination.trim()) {
-    const term = filters.destination.trim();
-    // Intelligent multi-field search: matches destination, pickup origin, or route notes
-    query = query.or(
-      `destination.ilike.%${term}%,origin_label.ilike.%${term}%,short_note.ilike.%${term}%`,
-    );
-  }
+  // Exclude expired trips: depart_at >= afterDate OR (now - 2 hours buffer)
+  const cutoff = filters.afterDate || new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  query = query.gte("depart_at", cutoff);
+
   if (filters.womenOnlyOnly) {
     query = query.eq("women_only", true);
   }
-  if (filters.afterDate) {
-    query = query.gte("depart_at", filters.afterDate);
+  if (filters.roundTripOnly) {
+    query = query.eq("is_round_trip", true);
   }
 
   const { data, error } = await query.order("depart_at", { ascending: true });
   if (error) throw error;
-  return (data ?? []).map(rowToTrip);
+  if (!data || data.length === 0) return [];
+
+  let trips = data.map(rowToTrip);
+  const tripIds = trips.map((t) => t.id);
+
+  // Fetch approved seat counts for exact seat availability filtering
+  const { data: memberRows } = await supabase
+    .from("trip_members")
+    .select("trip_id, seats_requested")
+    .in("trip_id", tripIds)
+    .eq("status", "approved");
+
+  const bookedSeatsMap = new Map<string, number>();
+  (memberRows ?? []).forEach((m: any) => {
+    const prev = bookedSeatsMap.get(m.trip_id) ?? 0;
+    const count = m.seats_requested != null ? Number(m.seats_requested) : 1;
+    bookedSeatsMap.set(m.trip_id, prev + count);
+  });
+
+  // Filter by requested seats availability (e.g. 1, 2, 3, 4 seats)
+  if (filters.seatsNeeded && filters.seatsNeeded > 0) {
+    const needed = filters.seatsNeeded;
+    trips = trips.filter((t) => {
+      const booked = bookedSeatsMap.get(t.id) ?? 0;
+      const left = t.seatsTotal - booked;
+      return left >= needed;
+    });
+  }
+
+  if (trips.length === 0) return [];
+
+  // Fetch intermediate checkpoints for route stop matching
+  const { data: checkpointRows } = await supabase
+    .from("trip_checkpoints")
+    .select("trip_id, label, lat, lng, sort_order")
+    .in("trip_id", trips.map((t) => t.id));
+
+  const checkpointsByTrip = new Map<string, Array<{ label: string; lat: number; lng: number }>>();
+  (checkpointRows ?? []).forEach((cp: any) => {
+    const list = checkpointsByTrip.get(cp.trip_id) ?? [];
+    list.push({ label: cp.label, lat: Number(cp.lat), lng: Number(cp.lng) });
+    checkpointsByTrip.set(cp.trip_id, list);
+  });
+
+  const radiusKm = filters.radiusKm || 35; // 35 km search radius buffer for pinpoint search
+
+  // Filter by Origin & Destination criteria (Pins and Text)
+  trips = trips.filter((t) => {
+    const stops = checkpointsByTrip.get(t.id) ?? [];
+
+    // 1. Origin Matching (Text or Pin)
+    if (filters.originLat !== undefined && filters.originLng !== undefined) {
+      const distToOrigin = haversineDistanceKm(
+        filters.originLat,
+        filters.originLng,
+        t.originLat,
+        t.originLng,
+      );
+      const nearOrigin = distToOrigin <= radiusKm;
+      const nearStop = stops.some(
+        (s) =>
+          haversineDistanceKm(filters.originLat!, filters.originLng!, s.lat, s.lng) <= radiusKm,
+      );
+      if (!nearOrigin && !nearStop) return false;
+    } else if (filters.origin && filters.origin.trim()) {
+      const oTerm = filters.origin.trim().toLowerCase();
+      const matchOrigin = t.originLabel.toLowerCase().includes(oTerm);
+      const matchStop = stops.some((s) => s.label.toLowerCase().includes(oTerm));
+      if (!matchOrigin && !matchStop) return false;
+    }
+
+    // 2. Destination Matching (Text or Pin)
+    if (filters.destinationLat !== undefined && filters.destinationLng !== undefined) {
+      const distToDest = haversineDistanceKm(
+        filters.destinationLat,
+        filters.destinationLng,
+        t.destinationLat,
+        t.destinationLng,
+      );
+      const nearDest = distToDest <= (filters.radiusKm || 45);
+      const nearStop = stops.some(
+        (s) =>
+          haversineDistanceKm(filters.destinationLat!, filters.destinationLng!, s.lat, s.lng) <=
+          (filters.radiusKm || 45),
+      );
+      if (!nearDest && !nearStop) return false;
+    } else if (filters.destination && filters.destination.trim()) {
+      const dTerm = filters.destination.trim().toLowerCase();
+      const matchDest = t.destination.toLowerCase().includes(dTerm);
+      const matchOrigin = !filters.origin && t.originLabel.toLowerCase().includes(dTerm);
+      const matchNote = (t.shortNote || "").toLowerCase().includes(dTerm);
+      const matchStop = stops.some((s) => s.label.toLowerCase().includes(dTerm));
+      if (!matchDest && !matchStop && !matchOrigin && !matchNote) return false;
+    }
+
+    return true;
+  });
+
+  return trips.map((t) => {
+    const booked = bookedSeatsMap.get(t.id) ?? 0;
+    return {
+      ...t,
+      seatsAvailable: Math.max(0, t.seatsTotal - booked),
+      checkpointCount: (checkpointsByTrip.get(t.id) ?? []).length,
+    };
+  });
 }
 
 export async function getTrip(tripId: string): Promise<Trip> {

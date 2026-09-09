@@ -51,6 +51,8 @@ export interface Trip {
   published: boolean;
   cancelledAt: string | null;
   createdAt: string;
+  seatsAvailable?: number;
+  checkpointCount?: number;
 }
 
 export interface TripMember {
@@ -89,8 +91,16 @@ export interface CreateTripInput {
 
 export interface TripFilters {
   destination?: string;
-  womenOnlyOnly?: boolean;
+  origin?: string;
+  originLat?: number;
+  originLng?: number;
+  destinationLat?: number;
+  destinationLng?: number;
+  radiusKm?: number;
+  seatsNeeded?: number;
   afterDate?: string;
+  womenOnlyOnly?: boolean;
+  roundTripOnly?: boolean;
 }
 
 export interface RequestToJoinOptions {
