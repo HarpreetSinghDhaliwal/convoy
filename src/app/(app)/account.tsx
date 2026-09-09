@@ -7,6 +7,7 @@ import { signOut, useAuthSession } from "@/modules/auth";
 import { useKycStatus } from "@/modules/kyc";
 import { useUserProfile } from "@/modules/profile";
 import { usePendingRatings, useUserRatings } from "@/modules/ratings";
+import { useFollowStatus } from "@/modules/follows";
 
 const AVATAR_OPTIONS = [
   { id: "🚗", label: "Roadtripper" },
@@ -21,6 +22,7 @@ export default function Account() {
   const { session } = useAuthSession();
   const { status, isVerified, loading: kycLoading } = useKycStatus();
   const { profile, updateProfile, loading: profileLoading } = useUserProfile();
+  const { stats: followStats } = useFollowStatus(session?.user.id);
   const { ratings: userRatings, aggregate } = useUserRatings(
     session?.user.id,
     session?.user.id,
@@ -101,23 +103,36 @@ export default function Account() {
             </View>
           </View>
 
-          {/* Ratings & Social Bar */}
-          <Pressable
-            onPress={() => router.push("/ratings")}
-            style={({ pressed }) => [styles.ratingBanner, pressed && styles.ratingBannerPressed]}
-          >
-            <View style={styles.ratingBannerLeft}>
-              <Text style={styles.ratingBannerStars}>
+          {/* Followers, Following, and Ratings Bar */}
+          <View style={styles.socialStatsBar}>
+            <Pressable
+              onPress={() => router.push("/following")}
+              style={({ pressed }) => [styles.statBox, pressed && styles.statBoxPressed]}
+            >
+              <Text style={styles.statNumber}>{followStats.followersCount}</Text>
+              <Text style={styles.statLabel}>Followers</Text>
+            </Pressable>
+            <View style={styles.statDivider} />
+            <Pressable
+              onPress={() => router.push("/following")}
+              style={({ pressed }) => [styles.statBox, pressed && styles.statBoxPressed]}
+            >
+              <Text style={styles.statNumber}>{followStats.followingCount}</Text>
+              <Text style={styles.statLabel}>Following</Text>
+            </Pressable>
+            <View style={styles.statDivider} />
+            <Pressable
+              onPress={() => router.push("/ratings")}
+              style={({ pressed }) => [styles.statBox, pressed && styles.statBoxPressed]}
+            >
+              <Text style={styles.statNumber}>
                 {aggregate.totalCount > 0 ? `★ ${aggregate.average.toFixed(1)}` : "★ New"}
               </Text>
-              <Text style={styles.ratingBannerSub}>
-                {aggregate.totalCount > 0
-                  ? `${aggregate.totalCount} Rating${aggregate.totalCount === 1 ? "" : "s"} (${aggregate.count} Exchanged)`
-                  : "No reviews yet"}
+              <Text style={styles.statLabel}>
+                {aggregate.totalCount > 0 ? `${aggregate.totalCount} Reviews` : "0 Reviews"}
               </Text>
-            </View>
-            <Text style={styles.ratingBannerLink}>View All Reviews ›</Text>
-          </Pressable>
+            </Pressable>
+          </View>
 
           <View style={styles.badgesRow}>
             {isVerified ? (
@@ -389,40 +404,40 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     ...shadows.sm,
   },
-  ratingBanner: {
+  socialStatsBar: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "space-around",
     backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
     marginTop: spacing.md,
     borderWidth: 1,
     borderColor: colors.line,
   },
-  ratingBannerPressed: {
-    backgroundColor: colors.lineLight,
-  },
-  ratingBannerLeft: {
-    flexDirection: "row",
+  statBox: {
     alignItems: "center",
-    gap: spacing.sm,
+    flex: 1,
+    paddingVertical: 2,
   },
-  ratingBannerStars: {
-    ...typography.captionBold,
-    color: colors.gold,
-    fontSize: 14,
+  statBoxPressed: {
+    opacity: 0.7,
   },
-  ratingBannerSub: {
+  statNumber: {
+    ...typography.h3,
+    color: colors.ink,
+    fontSize: 16,
+  },
+  statLabel: {
     ...typography.caption,
-    color: colors.inkSoft,
-    fontSize: 12,
-  },
-  ratingBannerLink: {
-    ...typography.captionBold,
-    color: colors.accent,
+    color: colors.inkSubtle,
     fontSize: 11,
+    marginTop: 2,
+  },
+  statDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: colors.line,
   },
   pendingAlertCard: {
     flexDirection: "row",

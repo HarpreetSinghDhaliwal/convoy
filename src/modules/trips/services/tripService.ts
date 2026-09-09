@@ -33,6 +33,7 @@ function rowToTrip(row: Record<string, unknown>): Trip {
     description: (row.description as string) ?? null,
     inclusions: (row.inclusions as Trip["inclusions"]) ?? null,
     links: (row.links as Trip["links"]) ?? null,
+    groupChatEnabled: Boolean(row.group_chat_enabled),
     published: row.published as boolean,
     cancelledAt: (row.cancelled_at as string) ?? null,
     createdAt: row.created_at as string,
@@ -341,4 +342,12 @@ export async function getApprovedSeatCount(tripId: string): Promise<number> {
     .eq("status", "approved" satisfies TripMemberStatus);
   if (error) throw error;
   return count ?? 0;
+}
+
+export async function setTripGroupChatEnabled(tripId: string, enabled: boolean): Promise<void> {
+  const { error } = await supabase
+    .from("trips")
+    .update({ group_chat_enabled: enabled })
+    .eq("id", tripId);
+  if (error) throw error;
 }

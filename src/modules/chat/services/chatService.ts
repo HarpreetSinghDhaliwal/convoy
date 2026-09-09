@@ -4,18 +4,18 @@ import type { Message, ActiveTripChat } from "../types";
 
 const READ_STORAGE_KEY_PREFIX = "convoy_chat_last_read_";
 
-export function getChatLastRead(tripId: string): number {
+export function getChatLastRead(chatKey: string): number {
   if (typeof window !== "undefined" && window.localStorage) {
-    const val = localStorage.getItem(`${READ_STORAGE_KEY_PREFIX}${tripId}`);
+    const val = localStorage.getItem(`${READ_STORAGE_KEY_PREFIX}${chatKey}`);
     return val ? parseInt(val, 10) : 0;
   }
   return 0;
 }
 
-export function setChatLastRead(tripId: string, timestamp?: number): void {
+export function setChatLastRead(chatKey: string, timestamp?: number): void {
   if (typeof window !== "undefined" && window.localStorage) {
     localStorage.setItem(
-      `${READ_STORAGE_KEY_PREFIX}${tripId}`,
+      `${READ_STORAGE_KEY_PREFIX}${chatKey}`,
       (timestamp ?? Date.now()).toString(),
     );
   }
@@ -26,26 +26,66 @@ function rowToMessage(row: Record<string, unknown>): Message {
     id: row.id as string,
     tripId: row.trip_id as string,
     senderId: row.sender_id as string,
+    recipientId: (row.recipient_id as string) ?? null,
     body: row.body as string,
     flagged: row.flagged as boolean,
     sentAt: row.sent_at as string,
   };
 }
 
-export async function fetchMessages(tripId: string): Promise<Message[]> {
+export async function fetchMessages(
+  tripId: string,
+  options?: { partnerId?: string; isGroup?: boolean; currentUserId?: string },
+): Promise<Message[]> {
   const { data, error } = await supabase
     .from("messages")
     .select()
     .eq("trip_id", tripId)
     .order("sent_at", { ascending: true });
+
   if (error) throw error;
-  return (data ?? []).map(rowToMessage);
+  const all = (data ?? []).map(rowToMessage);
+
+  // If 1-on-1 direct chat
+  if (options?.partnerId && options?.currentUserId && !options.isGroup) {
+    const { partnerId, currentUserId } = options;
+    return all.filter((m) => {
+      // Explicit 1-on-1 between these two users
+      if (
+        (m.senderId === currentUserId && m.recipientId === partnerId) ||
+        (m.senderId === partnerId && m.recipientId === currentUserId)
+      ) {
+        return true;
+      }
+      // Or legacy unrouted messages from partner or self
+      if (
+        !m.recipientId &&
+        (m.senderId === partnerId || m.senderId === currentUserId)
+      ) {
+        return true;
+      }
+      return false;
+    });
+  }
+
+  // If explicit group chat
+  if (options?.isGroup) {
+    return all.filter((m) => !m.recipientId);
+  }
+
+  return all;
 }
 
-export async function sendMessage(tripId: string, senderId: string, body: string): Promise<void> {
+export async function sendMessage(
+  tripId: string,
+  senderId: string,
+  body: string,
+  recipientId?: string | null,
+): Promise<void> {
   const { error } = await supabase.from("messages").insert({
     trip_id: tripId,
     sender_id: senderId,
+    recipient_id: recipientId ?? null,
     body,
     flagged: looksLikeContactOrPaymentInfo(body),
   });
@@ -56,7 +96,7 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
   // 1. Get trips where user is host (lead)
   const { data: hostedTrips } = await supabase
     .from("trips")
-    .select("id, destination, origin_label, depart_at, lead_id")
+    .select("id, destination, origin_label, depart_at, lead_id, group_chat_enabled")
     .eq("lead_id", userId)
     .is("cancelled_at", null);
 
@@ -75,95 +115,205 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
     origin_label: string;
     depart_at: string;
     lead_id: string;
+    group_chat_enabled?: boolean;
   }> = [];
 
   if (memberTripIds.length > 0) {
     const { data: jt } = await supabase
       .from("trips")
-      .select("id, destination, origin_label, depart_at, lead_id")
+      .select("id, destination, origin_label, depart_at, lead_id, group_chat_enabled")
       .in("id", memberTripIds)
       .is("cancelled_at", null);
     joinedTrips = jt ?? [];
   }
 
-  // Combine and deduplicate
-  const allTripsMap = new Map<
-    string,
-    {
-      id: string;
-      destination: string;
-      origin_label: string;
-      depart_at: string;
-      lead_id: string;
-      isLead: boolean;
-    }
-  >();
+  const allTripIds = Array.from(
+    new Set([...(hostedTrips ?? []).map((t) => t.id), ...joinedTrips.map((t) => t.id)]),
+  );
 
-  (hostedTrips ?? []).forEach((t) => {
-    allTripsMap.set(t.id, { ...t, isLead: true });
-  });
+  if (allTripIds.length === 0) return [];
 
-  joinedTrips.forEach((t) => {
-    if (!allTripsMap.has(t.id)) {
-      allTripsMap.set(t.id, { ...t, isLead: false });
-    }
-  });
+  // 3. Fetch all approved members for all these trips
+  const { data: allApprovedMembers } = await supabase
+    .from("trip_members")
+    .select("trip_id, user_id")
+    .in("trip_id", allTripIds)
+    .eq("status", "approved");
 
-  const tripList = Array.from(allTripsMap.values());
-  if (tripList.length === 0) return [];
-
-  const tripIds = tripList.map((t) => t.id);
-
-  // Fetch recent messages for these trips
+  // 4. Fetch all messages for these trips
   const { data: messagesData } = await supabase
     .from("messages")
     .select()
-    .in("trip_id", tripIds)
+    .in("trip_id", allTripIds)
     .order("sent_at", { ascending: false });
 
-  const messagesByTrip = new Map<string, Message[]>();
-  (messagesData ?? []).forEach((row) => {
-    const msg = rowToMessage(row);
-    const list = messagesByTrip.get(msg.tripId) ?? [];
-    list.push(msg);
-    messagesByTrip.set(msg.tripId, list);
-  });
+  const allMessages = (messagesData ?? []).map(rowToMessage);
 
-  // Fetch host user details
-  const leadIds = Array.from(new Set(tripList.map((t) => t.lead_id)));
+  // 5. Gather all user IDs needing profile lookups (hosts + members)
+  const userIdsToFetch = new Set<string>();
+  (hostedTrips ?? []).forEach((t) => userIdsToFetch.add(t.lead_id));
+  joinedTrips.forEach((t) => userIdsToFetch.add(t.lead_id));
+  (allApprovedMembers ?? []).forEach((m) => userIdsToFetch.add(m.user_id));
+
   const { data: usersData } = await supabase
     .from("users")
     .select("id, name, photo_url")
-    .in("id", leadIds);
+    .in("id", Array.from(userIdsToFetch));
 
   const usersMap = new Map<string, { name: string; photo_url?: string }>();
   (usersData ?? []).forEach((u) => {
     usersMap.set(u.id, { name: u.name, photo_url: u.photo_url });
   });
 
-  return tripList.map((t) => {
-    const tripMsgs = messagesByTrip.get(t.id) ?? [];
-    const lastMessage = tripMsgs[0];
-    const lastRead = getChatLastRead(t.id);
-    const unreadCount = tripMsgs.filter(
-      (m) => m.senderId !== userId && new Date(m.sentAt).getTime() > lastRead,
+  const chats: ActiveTripChat[] = [];
+
+  // Process Hosted Trips
+  (hostedTrips ?? []).forEach((t) => {
+    const groupChatEnabled = Boolean(t.group_chat_enabled);
+    const membersOnThisTrip = (allApprovedMembers ?? []).filter(
+      (m) => m.trip_id === t.id && m.user_id !== userId,
+    );
+
+    // 1-on-1 direct chats with each member
+    membersOnThisTrip.forEach((m) => {
+      const memberInfo = usersMap.get(m.user_id);
+      const partnerId = m.user_id;
+      const chatKey = `${t.id}_${partnerId}`;
+
+      const pairMessages = allMessages.filter(
+        (msg) =>
+          msg.tripId === t.id &&
+          ((msg.senderId === userId && msg.recipientId === partnerId) ||
+            (msg.senderId === partnerId && msg.recipientId === userId) ||
+            (!msg.recipientId && (msg.senderId === partnerId || msg.senderId === userId))),
+      );
+
+      const lastMessage = pairMessages[0];
+      const lastRead = getChatLastRead(chatKey);
+      const unreadCount = pairMessages.filter(
+        (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > lastRead,
+      ).length;
+
+      chats.push({
+        tripId: t.id,
+        chatId: chatKey,
+        destination: t.destination,
+        originLabel: t.origin_label,
+        departAt: t.depart_at,
+        leadId: t.lead_id,
+        leadName: usersMap.get(t.lead_id)?.name,
+        leadPhotoUrl: usersMap.get(t.lead_id)?.photo_url,
+        isLead: true,
+        partnerId,
+        partnerName: memberInfo?.name || "Traveler",
+        partnerPhotoUrl: memberInfo?.photo_url,
+        isGroup: false,
+        groupChatEnabled,
+        lastMessage,
+        unreadCount,
+      });
+    });
+
+    // If Group Chat is enabled, also add the Group Chat card
+    if (groupChatEnabled) {
+      const chatKey = `${t.id}_group`;
+      const groupMessages = allMessages.filter((msg) => msg.tripId === t.id && !msg.recipientId);
+      const lastMessage = groupMessages[0];
+      const lastRead = getChatLastRead(chatKey);
+      const unreadCount = groupMessages.filter(
+        (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > lastRead,
+      ).length;
+
+      chats.push({
+        tripId: t.id,
+        chatId: chatKey,
+        destination: t.destination,
+        originLabel: t.origin_label,
+        departAt: t.depart_at,
+        leadId: t.lead_id,
+        leadName: usersMap.get(t.lead_id)?.name,
+        leadPhotoUrl: usersMap.get(t.lead_id)?.photo_url,
+        isLead: true,
+        partnerName: "Trip Group Chat (All Co-Travelers)",
+        isGroup: true,
+        groupChatEnabled: true,
+        lastMessage,
+        unreadCount,
+      });
+    }
+  });
+
+  // Process Joined Trips (Passenger)
+  joinedTrips.forEach((t) => {
+    const groupChatEnabled = Boolean(t.group_chat_enabled);
+    const hostInfo = usersMap.get(t.lead_id);
+    const partnerId = t.lead_id;
+    const chatKey = `${t.id}_${partnerId}`;
+
+    const pairMessages = allMessages.filter(
+      (msg) =>
+        msg.tripId === t.id &&
+        ((msg.senderId === userId && msg.recipientId === partnerId) ||
+          (msg.senderId === partnerId && msg.recipientId === userId) ||
+          (!msg.recipientId && (msg.senderId === partnerId || msg.senderId === userId))),
+    );
+
+    const lastMessage = pairMessages[0];
+    const lastRead = getChatLastRead(chatKey);
+    const unreadCount = pairMessages.filter(
+      (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > lastRead,
     ).length;
 
-    const leadInfo = usersMap.get(t.lead_id);
-
-    return {
+    // 1-on-1 direct chat with the Host
+    chats.push({
       tripId: t.id,
+      chatId: chatKey,
       destination: t.destination,
       originLabel: t.origin_label,
       departAt: t.depart_at,
       leadId: t.lead_id,
-      leadName: leadInfo?.name,
-      leadPhotoUrl: leadInfo?.photo_url,
-      isLead: t.isLead,
+      leadName: hostInfo?.name,
+      leadPhotoUrl: hostInfo?.photo_url,
+      isLead: false,
+      partnerId,
+      partnerName: hostInfo?.name || "Host",
+      partnerPhotoUrl: hostInfo?.photo_url,
+      isGroup: false,
+      groupChatEnabled,
       lastMessage,
       unreadCount,
-    };
+    });
+
+    // If host enabled group chat, passenger also gets group chat option
+    if (groupChatEnabled) {
+      const groupChatKey = `${t.id}_group`;
+      const groupMessages = allMessages.filter((msg) => msg.tripId === t.id && !msg.recipientId);
+      const gLastMessage = groupMessages[0];
+      const gLastRead = getChatLastRead(groupChatKey);
+      const gUnreadCount = groupMessages.filter(
+        (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > gLastRead,
+      ).length;
+
+      chats.push({
+        tripId: t.id,
+        chatId: groupChatKey,
+        destination: t.destination,
+        originLabel: t.origin_label,
+        departAt: t.depart_at,
+        leadId: t.lead_id,
+        leadName: hostInfo?.name,
+        leadPhotoUrl: hostInfo?.photo_url,
+        isLead: false,
+        partnerName: "Trip Group Chat (All Co-Travelers)",
+        isGroup: true,
+        groupChatEnabled: true,
+        lastMessage: gLastMessage,
+        unreadCount: gUnreadCount,
+      });
+    }
   });
+
+  return chats;
 }
 
 export function subscribeToTripMessages(

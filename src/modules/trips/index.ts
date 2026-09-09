@@ -6,7 +6,7 @@ export { useTrips } from "./hooks/useTrips";
 export { useTripDetail } from "./hooks/useTripDetail";
 export { useMyMemberships } from "./hooks/useMyMemberships";
 export { useCheckpoints } from "./hooks/useCheckpoints";
-export { getRequesterLocations } from "./services/tripService";
+export { getRequesterLocations, setTripGroupChatEnabled } from "./services/tripService";
 export type {
   Trip,
   TripMember,

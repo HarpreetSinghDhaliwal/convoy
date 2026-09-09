@@ -14,7 +14,7 @@ import { Button, Screen, EmptyState, Avatar, Badge, Card } from "@/components";
 import { colors, radius, shadows, spacing, typography } from "@/theme";
 import { useAuthSession } from "@/modules/auth";
 import { SosButton } from "@/modules/safety";
-import { useTripDetail } from "@/modules/trips/hooks/useTripDetail";
+import { useTripDetail, setTripGroupChatEnabled } from "@/modules/trips";
 import { supabase } from "@/lib/supabase/client";
 import { useTripChat } from "../hooks/useTripChat";
 import { setChatLastRead } from "../services/chatService";
@@ -29,46 +29,122 @@ const QUICK_CHIPS = [
 ];
 
 export function ChatScreen() {
-  const { id: tripId } = useLocalSearchParams<{ id: string }>();
+  const {
+    id: tripId,
+    partnerId: initialPartnerId,
+    isGroup: initialIsGroup,
+  } = useLocalSearchParams<{ id: string; partnerId?: string; isGroup?: string }>();
+
   const { session } = useAuthSession();
-  const { trip } = useTripDetail(tripId);
-  const { messages, loading, sending, send, looksLikeContactOrPaymentInfo } = useTripChat(tripId);
-  const [draft, setDraft] = useState("");
-  const [blockedNotice, setBlockedNotice] = useState(false);
+  const { trip, refresh: refreshTrip } = useTripDetail(tripId);
+
+  const isHost = trip && session?.user.id === trip.leadId;
+  const groupChatEnabled = Boolean(trip?.groupChatEnabled);
+
+  // Active target state
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string | undefined>(
+    initialPartnerId || (!isHost ? trip?.leadId : undefined),
+  );
+  const [isGroupMode, setIsGroupMode] = useState<boolean>(
+    initialIsGroup === "true" && groupChatEnabled,
+  );
+  const [togglingGroup, setTogglingGroup] = useState(false);
+
+  // Approved members list for host selection
+  const [approvedMembers, setApprovedMembers] = useState<
+    Array<{ id: string; name: string; photoUrl?: string }>
+  >([]);
+
+  // Participants map for avatar/name resolution
   const [memberMap, setMemberMap] = useState<Map<string, { name: string; photoUrl?: string }>>(
     new Map(),
   );
 
-  // Mark chat as read
+  // Effective partner ID (for 1-on-1)
+  const activePartnerId = isGroupMode
+    ? undefined
+    : selectedPartnerId || (!isHost ? trip?.leadId : approvedMembers[0]?.id);
+
+  const { messages, loading, sending, send, looksLikeContactOrPaymentInfo } = useTripChat(
+    tripId,
+    {
+      partnerId: activePartnerId,
+      isGroup: isGroupMode,
+    },
+  );
+
+  const [draft, setDraft] = useState("");
+  const [blockedNotice, setBlockedNotice] = useState(false);
+
+  // Mark active chat as read
   useEffect(() => {
     if (tripId) {
-      setChatLastRead(tripId, Date.now());
+      const chatKey = isGroupMode ? `${tripId}_group` : `${tripId}_${activePartnerId || ""}`;
+      setChatLastRead(chatKey, Date.now());
     }
-  }, [tripId, messages.length]);
+  }, [tripId, isGroupMode, activePartnerId, messages.length]);
 
-  // Load profiles for trip participants
+  // Load approved members & host profile
   useEffect(() => {
-    async function loadParticipantProfiles() {
+    async function loadMembers() {
       if (!tripId) return;
-      const senderIds = Array.from(new Set(messages.map((m) => m.senderId)));
-      if (trip?.leadId) senderIds.push(trip.leadId);
-      if (senderIds.length === 0) return;
 
-      const { data } = await supabase
-        .from("users")
-        .select("id, name, photo_url")
-        .in("id", senderIds);
+      const { data: memberRows } = await supabase
+        .from("trip_members")
+        .select("user_id")
+        .eq("trip_id", tripId)
+        .eq("status", "approved");
 
-      if (data) {
-        const m = new Map<string, { name: string; photoUrl?: string }>();
-        data.forEach((u: any) => {
-          m.set(u.id, { name: u.name, photoUrl: u.photo_url });
-        });
-        setMemberMap(m);
+      const memberIds = (memberRows ?? []).map((m) => m.user_id as string);
+      const allIds = new Set(memberIds);
+      if (trip?.leadId) allIds.add(trip.leadId);
+
+      if (allIds.size > 0) {
+        const { data: users } = await supabase
+          .from("users")
+          .select("id, name, photo_url")
+          .in("id", Array.from(allIds));
+
+        if (users) {
+          const map = new Map<string, { name: string; photoUrl?: string }>();
+          const approvedList: Array<{ id: string; name: string; photoUrl?: string }> = [];
+
+          users.forEach((u: any) => {
+            const item = { id: u.id, name: u.name, photoUrl: u.photo_url };
+            map.set(u.id, item);
+            if (u.id !== trip?.leadId) {
+              approvedList.push(item);
+            }
+          });
+
+          setMemberMap(map);
+          setApprovedMembers(approvedList);
+
+          // If host and no partner selected, default to first passenger
+          if (isHost && !selectedPartnerId && approvedList.length > 0 && !isGroupMode) {
+            setSelectedPartnerId(approvedList[0].id);
+          }
+        }
       }
     }
-    loadParticipantProfiles();
-  }, [tripId, trip?.leadId, messages.length]);
+    loadMembers();
+  }, [tripId, trip?.leadId, isHost, selectedPartnerId, isGroupMode]);
+
+  async function handleToggleGroupChat() {
+    if (!tripId || !isHost) return;
+    setTogglingGroup(true);
+    try {
+      await setTripGroupChatEnabled(tripId, !groupChatEnabled);
+      await refreshTrip();
+      if (!groupChatEnabled) {
+        setIsGroupMode(true);
+      } else {
+        setIsGroupMode(false);
+      }
+    } finally {
+      setTogglingGroup(false);
+    }
+  }
 
   const draftLooksFlagged = draft.length > 0 && looksLikeContactOrPaymentInfo(draft);
 
@@ -84,9 +160,18 @@ export function ChatScreen() {
     if (!customText) setDraft("");
   }
 
+  const partnerInfo = activePartnerId ? memberMap.get(activePartnerId) : undefined;
+  const hostInfo = trip?.leadId ? memberMap.get(trip.leadId) : undefined;
+
+  const chatTitle = isGroupMode
+    ? `👥 Group Chat: ${trip?.destination || "Trip"}`
+    : isHost
+    ? `💬 Chat with ${partnerInfo?.name || "Passenger"}`
+    : `💬 Chat with Host: ${hostInfo?.name || "Host"}`;
+
   function renderMessage({ item }: { item: Message }) {
     const isMine = item.senderId === session?.user.id;
-    const isHost = trip && item.senderId === trip.leadId;
+    const isItemHost = trip && item.senderId === trip.leadId;
     const sender = memberMap.get(item.senderId);
     const timeString = new Date(item.sentAt).toLocaleTimeString(undefined, {
       hour: "2-digit",
@@ -111,7 +196,7 @@ export function ChatScreen() {
               style={styles.senderHeader}
             >
               <Text style={styles.senderName}>{sender?.name || "Co-Traveler"}</Text>
-              {isHost && <Text style={styles.hostBadgeTag}>👑 Host</Text>}
+              {isItemHost && <Text style={styles.hostBadgeTag}>👑 Host</Text>}
             </Pressable>
           )}
 
@@ -137,17 +222,17 @@ export function ChatScreen() {
   return (
     <Screen
       showBack
-      title="Roadtrip Group Chat"
+      title={chatTitle}
       rightAction={<SosButton tripId={tripId} />}
     >
-      {/* Group Header Card */}
+      {/* Trip Info Header Card */}
       {trip && (
-        <View style={styles.groupHeaderCard}>
+        <View style={styles.tripHeaderCard}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.groupDestTitle} numberOfLines={1}>
+            <Text style={styles.tripDestTitle} numberOfLines={1}>
               🚗 {trip.destination}
             </Text>
-            <Text style={styles.groupSub}>
+            <Text style={styles.tripRouteSub}>
               📍 {trip.originLabel} • 📅{" "}
               {new Date(trip.departAt).toLocaleDateString(undefined, {
                 weekday: "short",
@@ -156,14 +241,102 @@ export function ChatScreen() {
               })}
             </Text>
           </View>
+
+          {/* Host Group Toggle Button */}
+          {isHost ? (
+            <Pressable
+              onPress={handleToggleGroupChat}
+              style={[styles.hostToggleBtn, groupChatEnabled && styles.hostToggleBtnActive]}
+            >
+              <Text style={[styles.hostToggleText, groupChatEnabled && styles.hostToggleTextActive]}>
+                {groupChatEnabled ? "👥 Group: ON" : "🔒 1-on-1 Mode"}
+              </Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={() => router.push({ pathname: "/trips/[id]", params: { id: trip.id } })}
+              style={styles.tripDetailsPill}
+            >
+              <Text style={styles.tripDetailsPillText}>Trip Details ›</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      {/* Host / Participant Channel Switcher */}
+      {isHost && (approvedMembers.length > 1 || groupChatEnabled) && (
+        <View style={styles.channelSwitcherBar}>
+          <FlatList
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            data={approvedMembers}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.channelSwitcherContent}
+            renderItem={({ item }) => {
+              const active = !isGroupMode && activePartnerId === item.id;
+              return (
+                <Pressable
+                  style={[styles.channelChip, active && styles.channelChipActive]}
+                  onPress={() => {
+                    setIsGroupMode(false);
+                    setSelectedPartnerId(item.id);
+                  }}
+                >
+                  <Text style={[styles.channelChipText, active && styles.channelChipTextActive]}>
+                    💬 {item.name || "Passenger"}
+                  </Text>
+                </Pressable>
+              );
+            }}
+            ListFooterComponent={
+              groupChatEnabled ? (
+                <Pressable
+                  style={[styles.channelChip, isGroupMode && styles.channelChipActive]}
+                  onPress={() => setIsGroupMode(true)}
+                >
+                  <Text style={[styles.channelChipText, isGroupMode && styles.channelChipTextActive]}>
+                    👥 Group Chat
+                  </Text>
+                </Pressable>
+              ) : null
+            }
+          />
+        </View>
+      )}
+
+      {/* Passenger Group Switcher (only if Host enabled group chat) */}
+      {!isHost && groupChatEnabled && (
+        <View style={styles.channelSwitcherBar}>
           <Pressable
-            onPress={() => router.push({ pathname: "/trips/[id]", params: { id: trip.id } })}
-            style={styles.tripDetailsPill}
+            style={[styles.channelChip, !isGroupMode && styles.channelChipActive]}
+            onPress={() => setIsGroupMode(false)}
           >
-            <Text style={styles.tripDetailsPillText}>Trip Details ›</Text>
+            <Text style={[styles.channelChipText, !isGroupMode && styles.channelChipTextActive]}>
+              💬 1-on-1 with Host
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.channelChip, isGroupMode && styles.channelChipActive]}
+            onPress={() => setIsGroupMode(true)}
+          >
+            <Text style={[styles.channelChipText, isGroupMode && styles.channelChipTextActive]}>
+              👥 Trip Group Chat
+            </Text>
           </Pressable>
         </View>
       )}
+
+      {/* Privacy Mode Notice Bar */}
+      <View style={styles.privacyModeNotice}>
+        <Text style={styles.privacyModeIcon}>{isGroupMode ? "👥" : "🔒"}</Text>
+        <Text style={styles.privacyModeText}>
+          {isGroupMode
+            ? "Group Chat: Visible to all approved co-travelers (enabled by Trip Host)."
+            : isHost
+            ? `Private 1-on-1 chat with ${partnerInfo?.name || "this traveler"}. Co-travelers cannot see this.`
+            : `Private 1-on-1 chat with Host (${hostInfo?.name || "Host"}). No other passengers can see this.`}
+        </Text>
+      </View>
 
       {/* Chat Messages List */}
       <FlatList
@@ -177,9 +350,13 @@ export function ChatScreen() {
         ListEmptyComponent={
           !loading ? (
             <EmptyState
-              icon="💬"
-              title="Welcome to the group chat!"
-              description="Say hi to your co-travelers and coordinate your departure point and roadtrip vibes."
+              icon={isGroupMode ? "👥" : "💬"}
+              title={isGroupMode ? "Welcome to the group chat!" : `Start 1-on-1 Chat with ${partnerInfo?.name || (!isHost ? "Host" : "Passenger")}`}
+              description={
+                isGroupMode
+                  ? "Coordinate departure times and music vibes with the entire roadtrip group."
+                  : "Private coordination between you and the host/traveler. Avoid sharing off-platform contact info."
+              }
             />
           ) : null
         }
@@ -219,7 +396,11 @@ export function ChatScreen() {
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
-            placeholder="Type a message to roadtrip group..."
+            placeholder={
+              isGroupMode
+                ? "Type a message to group..."
+                : `Message ${partnerInfo?.name || (isHost ? "passenger" : "host")} directly...`
+            }
             placeholderTextColor={colors.inkSubtle}
             value={draft}
             onChangeText={setDraft}
@@ -242,7 +423,7 @@ export function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  groupHeaderCard: {
+  tripHeaderCard: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -254,16 +435,36 @@ const styles = StyleSheet.create({
     borderColor: colors.line,
     marginBottom: spacing.xs,
   },
-  groupDestTitle: {
+  tripDestTitle: {
     ...typography.captionBold,
     color: colors.ink,
     fontSize: 14,
   },
-  groupSub: {
+  tripRouteSub: {
     ...typography.caption,
     color: colors.inkSubtle,
     fontSize: 11,
     marginTop: 2,
+  },
+  hostToggleBtn: {
+    backgroundColor: colors.paper,
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: 5,
+    borderRadius: radius.full,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+  },
+  hostToggleBtnActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  hostToggleText: {
+    ...typography.captionBold,
+    color: colors.ink,
+    fontSize: 11,
+  },
+  hostToggleTextActive: {
+    color: colors.paper,
   },
   tripDetailsPill: {
     backgroundColor: colors.paper,
@@ -277,6 +478,54 @@ const styles = StyleSheet.create({
     ...typography.captionBold,
     color: colors.accent,
     fontSize: 11,
+  },
+  channelSwitcherBar: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    paddingVertical: 4,
+    marginBottom: 4,
+  },
+  channelSwitcherContent: {
+    gap: spacing.xs,
+  },
+  channelChip: {
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  channelChipActive: {
+    backgroundColor: colors.paperRaised,
+    borderColor: colors.accent,
+  },
+  channelChipText: {
+    ...typography.captionBold,
+    color: colors.inkMuted,
+    fontSize: 12,
+  },
+  channelChipTextActive: {
+    color: colors.accent,
+  },
+  privacyModeNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    marginBottom: spacing.xs,
+    gap: 6,
+  },
+  privacyModeIcon: {
+    fontSize: 12,
+  },
+  privacyModeText: {
+    ...typography.caption,
+    color: colors.inkSubtle,
+    fontSize: 11,
+    flex: 1,
   },
   list: {
     flex: 1,
@@ -452,3 +701,4 @@ const styles = StyleSheet.create({
     minWidth: 70,
   },
 });
+

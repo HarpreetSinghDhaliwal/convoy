@@ -47,6 +47,7 @@ export interface Trip {
   description: string | null;
   inclusions: TripInclusions | null;
   links: TripLink[] | null;
+  groupChatEnabled?: boolean;
   published: boolean;
   cancelledAt: string | null;
   createdAt: string;
