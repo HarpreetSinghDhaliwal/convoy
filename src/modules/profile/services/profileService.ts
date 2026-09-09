@@ -1,6 +1,25 @@
 import { supabase } from "@/lib/supabase/client";
 import type { EmergencyContact, PublicProfile, UserProfile } from "../types";
 
+const profileListeners = new Set<() => void>();
+
+export function subscribeProfile(listener: () => void) {
+  profileListeners.add(listener);
+  return () => {
+    profileListeners.delete(listener);
+  };
+}
+
+export function notifyProfileChanged() {
+  profileListeners.forEach((fn) => {
+    try {
+      fn();
+    } catch (e) {
+      console.error("Error in profile listener:", e);
+    }
+  });
+}
+
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from("users")
@@ -34,11 +53,19 @@ export async function updateUserProfile(
   if (updates.photoUrl !== undefined) payload.photo_url = updates.photoUrl;
   if (updates.emergencyContact !== undefined) payload.emergency_contact = updates.emergencyContact;
 
-  const { error } = await supabase
+  const { error: updateErr } = await supabase
     .from("users")
     .update(payload)
     .eq("id", userId);
-  if (error) throw error;
+
+  if (updateErr) {
+    const { error: upsertErr } = await supabase
+      .from("users")
+      .upsert({ id: userId, phone: "", ...payload }, { onConflict: "id" });
+    if (upsertErr) throw upsertErr;
+  }
+
+  notifyProfileChanged();
 }
 
 export async function getEmergencyContact(userId: string): Promise<EmergencyContact | null> {

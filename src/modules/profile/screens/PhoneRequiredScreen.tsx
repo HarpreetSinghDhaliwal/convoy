@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { router } from "expo-router";
 import { Screen, Button, TextField, Card, Badge } from "@/components";
 import { colors, radius, shadows, spacing, typography } from "@/theme";
 import { usePhone } from "../hooks/usePhone";
@@ -77,6 +78,7 @@ export function PhoneRequiredScreen() {
           relationship,
         },
       });
+      router.replace("/(app)");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save your profile — please try again");
     } finally {

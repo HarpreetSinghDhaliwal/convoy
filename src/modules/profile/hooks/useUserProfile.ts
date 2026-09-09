@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuthSession } from "@/modules/auth";
-import { getUserProfile, updateUserProfile } from "../services/profileService";
+import { getUserProfile, updateUserProfile, subscribeProfile } from "../services/profileService";
 import type { EmergencyContact, UserProfile } from "../types";
 
 export function useUserProfile() {
@@ -12,6 +12,7 @@ export function useUserProfile() {
     async function load() {
       const userId = session?.user.id;
       if (!userId) {
+        setProfile(null);
         setLoading(false);
         return;
       }
@@ -29,6 +30,14 @@ export function useUserProfile() {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  // Subscribe to global profile updates
+  useEffect(() => {
+    const unsubscribe = subscribeProfile(() => {
+      refresh();
+    });
+    return unsubscribe;
   }, [refresh]);
 
   async function updateProfile(updates: {

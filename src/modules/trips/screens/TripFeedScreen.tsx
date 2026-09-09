@@ -178,7 +178,7 @@ export function TripFeedScreen() {
               icon="🚗"
               title="No matching trips found"
               description="Be the first road-trip host to plan a journey to this destination!"
-              actionLabel="Plan this trip"
+              actionLabel="Plan a Roadtrip"
               onAction={() => router.push("/trips/create")}
             />
           ) : null

@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import { router } from "expo-router";
-import { Screen, Button, Card, Badge, Stepper, TextField } from "@/components";
+import { Screen, Button, Card, Badge, Stepper, TextField, DateTimePicker } from "@/components";
 import { colors, radius, shadows, spacing, typography } from "@/theme";
 import { useAuthSession } from "@/modules/auth";
 import { useKycStatus } from "@/modules/kyc";
@@ -24,10 +23,8 @@ export function CreateTripScreen() {
   const [destinationPoint, setDestinationPoint] = useState<GeocodeResult | null>(null);
   const { route, loading: routeLoading, error: routeError } = useRoute(origin, destinationPoint);
   const [departAt, setDepartAt] = useState(new Date());
-  const [showPicker, setShowPicker] = useState(false);
   const [isRoundTrip, setIsRoundTrip] = useState(false);
   const [returnDepartAt, setReturnDepartAt] = useState<Date | null>(null);
-  const [showReturnPicker, setShowReturnPicker] = useState(false);
   const [checkpoints, setCheckpoints] = useState<DraftCheckpoint[]>([]);
   const [seats, setSeats] = useState(3);
   const [price, setPrice] = useState("");
@@ -181,30 +178,12 @@ export function CreateTripScreen() {
             <Text style={styles.sectionTitle}>Departure & Schedule</Text>
           </View>
 
-          <Text style={styles.fieldLabel}>Departure Date & Time</Text>
-          <Button
-            label={departAt.toLocaleString(undefined, {
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-            onPress={() => setShowPicker(true)}
-            variant="secondary"
-            size="lg"
-            leftIcon={<Text>📅</Text>}
+          <DateTimePicker
+            label="Departure Date & Time"
+            value={departAt}
+            onChange={setDepartAt}
+            minDate={new Date()}
           />
-          {showPicker && (
-            <DateTimePicker
-              value={departAt}
-              mode="datetime"
-              onChange={(_event, date) => {
-                setShowPicker(false);
-                if (date) setDepartAt(date);
-              }}
-            />
-          )}
 
           <View style={styles.switchCard}>
             <View style={styles.switchTextCol}>
@@ -216,6 +195,11 @@ export function CreateTripScreen() {
               onValueChange={(next) => {
                 setIsRoundTrip(next);
                 if (!next) setReturnDepartAt(null);
+                else if (!returnDepartAt) {
+                  const ret = new Date(departAt);
+                  ret.setDate(ret.getDate() + 2);
+                  setReturnDepartAt(ret);
+                }
               }}
               trackColor={{ false: colors.line, true: colors.accent }}
             />
@@ -223,34 +207,12 @@ export function CreateTripScreen() {
 
           {isRoundTrip && (
             <View style={styles.returnDateBlock}>
-              <Text style={styles.fieldLabel}>Return Departure</Text>
-              <Button
-                label={
-                  returnDepartAt
-                    ? returnDepartAt.toLocaleString(undefined, {
-                        weekday: "short",
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })
-                    : "Select Return Date & Time"
-                }
-                onPress={() => setShowReturnPicker(true)}
-                variant="secondary"
-                size="lg"
-                leftIcon={<Text>↩️</Text>}
+              <DateTimePicker
+                label="Return Departure Date & Time"
+                value={returnDepartAt ?? new Date(departAt.getTime() + 4 * 3600 * 1000)}
+                onChange={setReturnDepartAt}
+                minDate={departAt}
               />
-              {showReturnPicker && (
-                <DateTimePicker
-                  value={returnDepartAt ?? departAt}
-                  mode="datetime"
-                  onChange={(_event, date) => {
-                    setShowReturnPicker(false);
-                    if (date) setReturnDepartAt(date);
-                  }}
-                />
-              )}
             </View>
           )}
         </Card>

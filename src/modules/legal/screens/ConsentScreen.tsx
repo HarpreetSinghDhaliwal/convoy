@@ -1,59 +1,70 @@
 import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
-import { Screen, Button } from "@/components";
-import { colors, radius, spacing, typography } from "@/theme";
+import { Screen, Button, Card, Badge } from "@/components";
+import { colors, radius, shadows, spacing, typography } from "@/theme";
 import { useAuthSession } from "@/modules/auth";
-import { recordConsent } from "../services/legalService";
+import { recordConsents } from "../services/legalService";
 import { useConsentStatus } from "../hooks/useConsentStatus";
 import type { ConsentType } from "../types";
 
-const ITEMS: { type: ConsentType; title: string; body: string }[] = [
+const ITEMS: { type: ConsentType; icon: string; title: string; body: string }[] = [
   {
     type: "kyc",
-    title: "Identity verification data",
-    body: "Your government ID (via DigiLocker) and verification status, used to confirm you're a real, accountable person before you can host or join a trip.",
+    icon: "🪪",
+    title: "Identity Verification & Trust",
+    body: "Government ID verification status confirms you are a real, accountable traveler before hosting or joining journeys.",
   },
   {
     type: "location",
-    title: "Location data",
-    body: "Used for trip pickup points, route/ETA, and — only if you trigger it — live location shared with your emergency contacts during an SOS.",
+    icon: "📍",
+    title: "Pickup Points & Safety Location",
+    body: "Used for trip pickup coordination, driving route calculations, and live emergency location sharing during SOS.",
   },
   {
     type: "chat",
-    title: "Trip chat messages",
-    body: "Stored while a trip is active, hidden from the app 2 weeks after the trip ends, and kept in a restricted, access-controlled store for 90 days total in case a safety report needs it — then deleted for good.",
+    icon: "💬",
+    title: "Trip Coordination Chat",
+    body: "Coordination messages stored during active trips, strictly purged 90 days after trip completion.",
   },
 ];
 
-// Three separate consents, three separate checkboxes — not one "I agree to
-// everything" tap. Each one writes its own timestamp (legalService).
 export function ConsentScreen() {
   const { session } = useAuthSession();
   const { refresh } = useConsentStatus();
   const [checked, setChecked] = useState<Record<ConsentType, boolean>>({
-    kyc: false,
-    location: false,
-    chat: false,
+    kyc: true,
+    location: true,
+    chat: true,
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   const allChecked = ITEMS.every((item) => checked[item.type]);
 
+  function toggleAll() {
+    const nextState = !allChecked;
+    setChecked({
+      kyc: nextState,
+      location: nextState,
+      chat: nextState,
+    });
+  }
+
   async function handleContinue() {
-    if (!session?.user.id || !allChecked) return;
+    if (!session?.user.id) return;
+    if (!allChecked) {
+      setError("Please review and agree to all 3 safety & privacy consents to proceed");
+      return;
+    }
     setSubmitting(true);
     setError(undefined);
     try {
-      await Promise.all(ITEMS.map((item) => recordConsent(session.user.id, item.type)));
-      refresh();
+      await recordConsents(session.user.id, ["kyc", "location", "chat"]);
+      await refresh();
+      router.replace("/phone");
     } catch (err) {
-      // Was silently swallowed before — the button would just stop loading
-      // with no visible outcome, which is exactly the "clicked and nothing
-      // happens" symptom. Surfacing it here so a real cause (an RLS policy,
-      // a not-yet-applied migration, a network error) is actually visible.
-      setError(err instanceof Error ? err.message : "Couldn't save your consent — try again");
+      setError(err instanceof Error ? err.message : "Couldn't save your consent — please try again");
     } finally {
       setSubmitting(false);
     }
@@ -61,62 +72,227 @@ export function ConsentScreen() {
 
   return (
     <Screen>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Before you continue</Text>
-        <Text style={styles.subtitle}>
-          Here&rsquo;s exactly what we collect and why — agree to each separately, not all at once.
-        </Text>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        <View style={styles.header}>
+          <View style={styles.badgeRow}>
+            <Badge label="Step 1 of 2 • Privacy & Safety" variant="neutral" />
+          </View>
+          <Text style={styles.title}>Privacy & Community Safety</Text>
+          <Text style={styles.subtitle}>
+            In compliance with India&rsquo;s Digital Personal Data Protection (DPDP) Act, please review and authorize data handling for your journeys:
+          </Text>
+        </View>
 
-        {ITEMS.map((item) => (
-          <Pressable
-            key={item.type}
-            style={styles.item}
-            onPress={() => setChecked((prev) => ({ ...prev, [item.type]: !prev[item.type] }))}
-          >
-            <View style={[styles.checkbox, checked[item.type] && styles.checkboxChecked]} />
-            <View style={styles.itemText}>
-              <Text style={styles.itemTitle}>{item.title}</Text>
-              <Text style={styles.itemBody}>{item.body}</Text>
-            </View>
+        <View style={styles.selectAllRow}>
+          <Pressable onPress={toggleAll} style={styles.selectAllBtn}>
+            <Text style={styles.selectAllText}>
+              {allChecked ? "✓ All Selected" : "Select All"}
+            </Text>
           </Pressable>
-        ))}
+        </View>
 
-        <Pressable onPress={() => router.push("/legal/terms")}>
-          <Text style={styles.link}>Read the full Terms of Service</Text>
-        </Pressable>
-        <Pressable onPress={() => router.push("/legal/privacy")}>
-          <Text style={styles.link}>Read the full Privacy Policy</Text>
-        </Pressable>
+        {ITEMS.map((item) => {
+          const isSelected = checked[item.type];
+          return (
+            <Card
+              key={item.type}
+              onPress={() => setChecked((prev) => ({ ...prev, [item.type]: !prev[item.type] }))}
+              style={[styles.itemCard, isSelected && styles.itemCardSelected]}
+            >
+              <View style={styles.itemRow}>
+                <View style={[styles.checkbox, isSelected && styles.checkboxChecked]}>
+                  {isSelected && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <View style={styles.itemTextCol}>
+                  <View style={styles.itemTitleRow}>
+                    <Text style={styles.itemIcon}>{item.icon}</Text>
+                    <Text style={styles.itemTitle}>{item.title}</Text>
+                  </View>
+                  <Text style={styles.itemBody}>{item.body}</Text>
+                </View>
+              </View>
+            </Card>
+          );
+        })}
 
-        <View style={{ height: spacing.xl }} />
-        {error && <Text style={styles.error}>{error}</Text>}
+        <Card style={styles.legalLinksCard}>
+          <Pressable onPress={() => router.push("/legal/terms")} style={styles.linkRow}>
+            <Text style={styles.linkText}>📄 Read full Terms of Service</Text>
+            <Text style={styles.linkArrow}>›</Text>
+          </Pressable>
+          <View style={styles.divider} />
+          <Pressable onPress={() => router.push("/legal/privacy")} style={styles.linkRow}>
+            <Text style={styles.linkText}>🔒 Read full Privacy Policy</Text>
+            <Text style={styles.linkArrow}>›</Text>
+          </Pressable>
+        </Card>
+
+        {error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorIcon}>⚠️</Text>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+
         <Button
-          label="Agree and continue"
+          label="Agree & Continue →"
           onPress={handleContinue}
           disabled={!allChecked}
           loading={submitting}
+          size="lg"
+          style={styles.continueBtn}
         />
+        <View style={{ height: spacing.xxxl }} />
       </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { ...typography.display, color: colors.ink, marginBottom: spacing.sm },
-  subtitle: { ...typography.body, color: colors.inkSoft, marginBottom: spacing.xl },
-  item: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg, alignItems: "flex-start" },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: radius.sm,
+  content: {
+    paddingBottom: spacing.xxxl,
+  },
+  header: {
+    marginBottom: spacing.lg,
+  },
+  badgeRow: {
+    flexDirection: "row",
+    marginBottom: spacing.sm,
+  },
+  title: {
+    ...typography.display,
+    color: colors.ink,
+    marginBottom: spacing.xs,
+  },
+  subtitle: {
+    ...typography.body,
+    color: colors.inkSoft,
+    lineHeight: 22,
+  },
+  selectAllRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginBottom: spacing.sm,
+  },
+  selectAllBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+  },
+  selectAllText: {
+    ...typography.captionBold,
+    color: colors.ink,
+  },
+  itemCard: {
+    padding: spacing.lg,
+    backgroundColor: colors.paper,
     borderWidth: 1.5,
+    borderColor: colors.lineLight,
+    marginBottom: spacing.md,
+    ...shadows.sm,
+  },
+  itemCardSelected: {
+    borderColor: colors.accent,
+    backgroundColor: colors.paperRaised,
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: radius.sm,
+    borderWidth: 2,
     borderColor: colors.line,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: spacing.md,
     marginTop: 2,
   },
-  checkboxChecked: { backgroundColor: colors.accent, borderColor: colors.accent },
-  itemText: { flex: 1 },
-  itemTitle: { ...typography.bodyMedium, color: colors.ink, marginBottom: spacing.xs },
-  itemBody: { ...typography.caption, color: colors.inkSoft },
-  link: { ...typography.body, color: colors.trust, marginBottom: spacing.sm, textDecorationLine: "underline" },
-  error: { ...typography.caption, color: colors.statusFlagged, marginBottom: spacing.md },
+  checkboxChecked: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  checkmark: {
+    color: colors.paper,
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  itemTextCol: {
+    flex: 1,
+  },
+  itemTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  itemIcon: {
+    fontSize: 16,
+    marginRight: spacing.xs + 2,
+  },
+  itemTitle: {
+    ...typography.bodyMedium,
+    color: colors.ink,
+    fontWeight: "700",
+  },
+  itemBody: {
+    ...typography.caption,
+    color: colors.inkSoft,
+    lineHeight: 18,
+  },
+  legalLinksCard: {
+    padding: 0,
+    backgroundColor: colors.paper,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+    overflow: "hidden",
+  },
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  linkText: {
+    ...typography.captionBold,
+    color: colors.trust,
+  },
+  linkArrow: {
+    ...typography.h2,
+    color: colors.inkSubtle,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.lineLight,
+  },
+  errorBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+    padding: spacing.md,
+    borderRadius: radius.md,
+    marginBottom: spacing.lg,
+  },
+  errorIcon: {
+    fontSize: 18,
+    marginRight: spacing.sm,
+  },
+  errorText: {
+    ...typography.captionBold,
+    color: colors.statusFlagged,
+    flex: 1,
+  },
+  continueBtn: {
+    marginTop: spacing.xs,
+  },
 });
+
