@@ -331,8 +331,9 @@ export function ChatScreen() {
                     setSelectedPartnerId(item.id);
                   }}
                 >
+                  <Avatar name={item.name || "Passenger"} uri={item.photoUrl} size={18} />
                   <Text style={[styles.channelChipText, active && styles.channelChipTextActive]}>
-                    💬 1-on-1: {item.name || "Passenger"}
+                    {item.name || "Passenger"}
                   </Text>
                 </Pressable>
               );
@@ -348,8 +349,9 @@ export function ChatScreen() {
             style={[styles.channelChip, !isGroupMode && styles.channelChipActive]}
             onPress={() => setIsGroupMode(false)}
           >
+            <Avatar name={hostInfo?.name || "Host"} uri={hostInfo?.photoUrl} size={18} />
             <Text style={[styles.channelChipText, !isGroupMode && styles.channelChipTextActive]}>
-              💬 1-on-1 with Host {hostInfo?.name ? `(${hostInfo.name})` : ""}
+              Host {hostInfo?.name ? `(${hostInfo.name})` : ""}
             </Text>
           </Pressable>
           <Pressable
@@ -566,6 +568,9 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   channelChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     backgroundColor: colors.surfaceSubtle,
     paddingHorizontal: spacing.md,
     paddingVertical: 6,

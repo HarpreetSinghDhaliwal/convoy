@@ -21,6 +21,27 @@ const SIZE_MAP: Record<string, number> = {
   xl: 72,
 };
 
+const AVATAR_PALETTES = [
+  { bg: "#EAF3F7", text: "#1E5F74", border: "#1E5F74" }, // Sapphire Slate
+  { bg: "#FDEEEB", text: "#C8452D", border: "#C8452D" }, // Terracotta Warm
+  { bg: "#DCFCE7", text: "#15803D", border: "#15803D" }, // Emerald Mint
+  { bg: "#FEF3C7", text: "#92400E", border: "#D97706" }, // Amber Gold
+  { bg: "#F3E8FF", text: "#6B21A8", border: "#9333EA" }, // Royal Violet
+  { bg: "#E0E7FF", text: "#3730A3", border: "#4F46E5" }, // Deep Indigo
+  { bg: "#FFE4E6", text: "#9F1239", border: "#E11D48" }, // Crimson Rose
+  { bg: "#CCFBF1", text: "#115E59", border: "#0D9488" }, // Cool Teal
+];
+
+function getPalette(str: string) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  const index = Math.abs(hash) % AVATAR_PALETTES.length;
+  return AVATAR_PALETTES[index];
+}
+
 export function Avatar({
   name,
   email,
@@ -31,16 +52,15 @@ export function Avatar({
 }: AvatarProps) {
   const numericSize = typeof size === "number" ? size : SIZE_MAP[size] || 44;
 
-  const identifier = name || email || "User";
-  const initials = identifier
-    .split(" ")
-    .map((part) => part[0])
-    .filter(Boolean)
-    .join("")
-    .slice(0, 2)
-    .toUpperCase() || "U";
+  const rawIdentifier = (name || email || "User").trim();
+  // Find first alphanumeric character for crisp initials, falling back to first char
+  const cleanCharMatch = rawIdentifier.match(/[a-zA-Z0-9]/);
+  const initials = cleanCharMatch
+    ? cleanCharMatch[0].toUpperCase()
+    : rawIdentifier.charAt(0).toUpperCase() || "U";
 
-  const fontSize = Math.round(numericSize * 0.38);
+  const palette = getPalette(rawIdentifier);
+  const fontSize = Math.round(numericSize * 0.44);
 
   return (
     <View style={[{ width: numericSize, height: numericSize }, styles.container, style]}>
@@ -56,10 +76,16 @@ export function Avatar({
         <View
           style={[
             styles.circle,
-            { width: numericSize, height: numericSize, borderRadius: numericSize / 2 },
+            {
+              width: numericSize,
+              height: numericSize,
+              borderRadius: numericSize / 2,
+              backgroundColor: palette.bg,
+              borderColor: palette.border,
+            },
           ]}
         >
-          <Text style={[styles.initials, { fontSize }]}>{initials}</Text>
+          <Text style={[styles.initials, { fontSize, color: palette.text }]}>{initials}</Text>
         </View>
       )}
 
