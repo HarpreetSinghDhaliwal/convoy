@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { searchPlace } from "../services/geocodeService";
 import type { GeocodeResult } from "../types";
 
-const DEBOUNCE_MS = 400;
+const DEBOUNCE_MS = 150;
 
 export function useGeocodeSearch() {
   const [results, setResults] = useState<GeocodeResult[]>([]);

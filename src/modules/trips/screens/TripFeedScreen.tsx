@@ -399,69 +399,123 @@ export function TripFeedScreen() {
         </View>
 
         {/* Live Map Autocomplete Suggestions Dropdown */}
-        {focusedInput === "origin" && (originGeocode.searching || originGeocode.results.length > 0) && (
+        {focusedInput === "origin" && (
           <View style={styles.suggestionsContainer}>
             <View style={styles.suggestionsHeader}>
               <Text style={styles.suggestionsHeaderTitle}>
-                {originGeocode.searching ? "🔍 Searching Maps..." : "📍 Map Suggestions (Sets Exact Pin)"}
+                {originGeocode.searching
+                  ? "🔍 Searching Maps..."
+                  : originGeocode.results.length > 0
+                  ? "📍 Map Suggestions (Sets Exact Pin)"
+                  : "📍 Popular Pickup Hubs"}
               </Text>
               <Pressable onPress={() => setFocusedInput(null)}>
                 <Text style={styles.suggestionsCloseText}>Close</Text>
               </Pressable>
             </View>
-            {originGeocode.results.map((item: GeocodeResult, idx: number) => (
-              <Pressable
-                key={`${item.lat}-${item.lng}-${idx}`}
-                style={({ pressed }) => [styles.suggestionItem, pressed && styles.suggestionItemPressed]}
-                onPress={() => selectOriginSuggestion(item)}
-              >
-                <Text style={styles.suggestionItemIcon}>📍</Text>
-                <View style={styles.suggestionItemContent}>
-                  <Text style={styles.suggestionItemTitle} numberOfLines={1}>
-                    {item.label.split(",")[0]}
-                  </Text>
-                  <Text style={styles.suggestionItemSubtitle} numberOfLines={1}>
-                    {item.label}
-                  </Text>
-                </View>
-                <View style={styles.setPinBadge}>
-                  <Text style={styles.setPinBadgeText}>Set Pin</Text>
-                </View>
-              </Pressable>
-            ))}
+
+            {originGeocode.results.length > 0 ? (
+              originGeocode.results.map((item: GeocodeResult, idx: number) => (
+                <Pressable
+                  key={`${item.lat}-${item.lng}-${idx}`}
+                  style={({ pressed }) => [styles.suggestionItem, pressed && styles.suggestionItemPressed]}
+                  onPress={() => selectOriginSuggestion(item)}
+                >
+                  <Text style={styles.suggestionItemIcon}>📍</Text>
+                  <View style={styles.suggestionItemContent}>
+                    <Text style={styles.suggestionItemTitle} numberOfLines={1}>
+                      {item.label.split(",")[0]}
+                    </Text>
+                    <Text style={styles.suggestionItemSubtitle} numberOfLines={1}>
+                      {item.label}
+                    </Text>
+                  </View>
+                  <View style={styles.setPinBadge}>
+                    <Text style={styles.setPinBadgeText}>Set Pin</Text>
+                  </View>
+                </Pressable>
+              ))
+            ) : !originGeocode.searching ? (
+              <View style={styles.quickChipsWrap}>
+                {[
+                  { label: "Chandigarh, India", lat: 30.7333, lng: 76.7794 },
+                  { label: "Mohali (SAS Nagar), Punjab", lat: 30.7046, lng: 76.7179 },
+                  { label: "Panchkula, Haryana", lat: 30.6942, lng: 76.8606 },
+                  { label: "Delhi / NCR, India", lat: 28.6139, lng: 77.2090 },
+                  { label: "Gurgaon (Gurugram), Haryana", lat: 28.4595, lng: 77.0266 },
+                  { label: "Noida, Uttar Pradesh", lat: 28.5355, lng: 77.3910 },
+                ].map((hub) => (
+                  <Pressable
+                    key={hub.label}
+                    style={styles.quickChip}
+                    onPress={() => selectOriginSuggestion(hub)}
+                  >
+                    <Text style={styles.quickChipText}>📍 {hub.label.split(",")[0]}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
           </View>
         )}
 
-        {focusedInput === "dest" && (destGeocode.searching || destGeocode.results.length > 0) && (
+        {focusedInput === "dest" && (
           <View style={styles.suggestionsContainer}>
             <View style={styles.suggestionsHeader}>
               <Text style={styles.suggestionsHeaderTitle}>
-                {destGeocode.searching ? "🔍 Searching Maps..." : "🎯 Map Suggestions (Sets Exact Pin)"}
+                {destGeocode.searching
+                  ? "🔍 Searching Maps..."
+                  : destGeocode.results.length > 0
+                  ? "🎯 Map Suggestions (Sets Exact Pin)"
+                  : "🎯 Popular Roadtrip Destinations"}
               </Text>
               <Pressable onPress={() => setFocusedInput(null)}>
                 <Text style={styles.suggestionsCloseText}>Close</Text>
               </Pressable>
             </View>
-            {destGeocode.results.map((item: GeocodeResult, idx: number) => (
-              <Pressable
-                key={`${item.lat}-${item.lng}-${idx}`}
-                style={({ pressed }) => [styles.suggestionItem, pressed && styles.suggestionItemPressed]}
-                onPress={() => selectDestSuggestion(item)}
-              >
-                <Text style={styles.suggestionItemIcon}>🎯</Text>
-                <View style={styles.suggestionItemContent}>
-                  <Text style={styles.suggestionItemTitle} numberOfLines={1}>
-                    {item.label.split(",")[0]}
-                  </Text>
-                  <Text style={styles.suggestionItemSubtitle} numberOfLines={1}>
-                    {item.label}
-                  </Text>
-                </View>
-                <View style={styles.setPinBadge}>
-                  <Text style={styles.setPinBadgeText}>Set Pin</Text>
-                </View>
-              </Pressable>
-            ))}
+
+            {destGeocode.results.length > 0 ? (
+              destGeocode.results.map((item: GeocodeResult, idx: number) => (
+                <Pressable
+                  key={`${item.lat}-${item.lng}-${idx}`}
+                  style={({ pressed }) => [styles.suggestionItem, pressed && styles.suggestionItemPressed]}
+                  onPress={() => selectDestSuggestion(item)}
+                >
+                  <Text style={styles.suggestionItemIcon}>🎯</Text>
+                  <View style={styles.suggestionItemContent}>
+                    <Text style={styles.suggestionItemTitle} numberOfLines={1}>
+                      {item.label.split(",")[0]}
+                    </Text>
+                    <Text style={styles.suggestionItemSubtitle} numberOfLines={1}>
+                      {item.label}
+                    </Text>
+                  </View>
+                  <View style={styles.setPinBadge}>
+                    <Text style={styles.setPinBadgeText}>Set Pin</Text>
+                  </View>
+                </Pressable>
+              ))
+            ) : !destGeocode.searching ? (
+              <View style={styles.quickChipsWrap}>
+                {[
+                  { label: "Manali, Himachal Pradesh, India", lat: 32.2432, lng: 77.1892 },
+                  { label: "Kasol, Parvati Valley, Himachal Pradesh", lat: 32.0100, lng: 77.3150 },
+                  { label: "Shimla, Himachal Pradesh, India", lat: 31.1048, lng: 77.1734 },
+                  { label: "Dharamshala, Himachal Pradesh, India", lat: 32.2190, lng: 76.3234 },
+                  { label: "Rishikesh, Uttarakhand, India", lat: 30.0869, lng: 78.2676 },
+                  { label: "Goa (North / Calangute / Anjuna), India", lat: 15.5439, lng: 73.7553 },
+                  { label: "Jaipur, Rajasthan, India", lat: 26.9124, lng: 75.7873 },
+                  { label: "Spiti Valley (Kaza), Himachal Pradesh", lat: 32.2276, lng: 78.0710 },
+                ].map((hub) => (
+                  <Pressable
+                    key={hub.label}
+                    style={styles.quickChip}
+                    onPress={() => selectDestSuggestion(hub)}
+                  >
+                    <Text style={styles.quickChipText}>🎯 {hub.label.split(",")[0]}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
           </View>
         )}
 
@@ -892,6 +946,27 @@ const styles = StyleSheet.create({
     ...typography.captionBold,
     color: colors.trust,
     fontSize: 10,
+  },
+
+  quickChipsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    paddingVertical: spacing.xs + 2,
+    paddingHorizontal: 2,
+  },
+  quickChip: {
+    backgroundColor: colors.paper,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+  },
+  quickChipText: {
+    ...typography.captionBold,
+    color: colors.inkMuted,
+    fontSize: 11.5,
   },
 
   pinBadgesRow: {
