@@ -322,10 +322,27 @@ export function TripDetailScreen() {
                 </View>
               </View>
               <Button
-                label="💬 Open Group Chat"
-                onPress={() => router.push({ pathname: "/trips/[id]/chat", params: { id: trip.id } })}
+                label="💬 1-on-1 Passenger Chats"
+                onPress={() =>
+                  router.push({
+                    pathname: "/trips/[id]/chat",
+                    params: { id: trip.id, isGroup: "false" },
+                  })
+                }
                 variant="primary"
                 size="lg"
+                style={styles.actionBtn}
+              />
+              <Button
+                label="📢 Trip Broadcast & Group Channel"
+                onPress={() =>
+                  router.push({
+                    pathname: "/trips/[id]/chat",
+                    params: { id: trip.id, isGroup: "true" },
+                  })
+                }
+                variant="secondary"
+                size="md"
                 style={styles.actionBtn}
               />
               <PickupPointManager tripId={trip.id} />
@@ -363,10 +380,27 @@ export function TripDetailScreen() {
 
               <View style={styles.confirmedActions}>
                 <Button
-                  label="💬 Open Trip Group Chat"
-                  onPress={() => router.push({ pathname: "/trips/[id]/chat", params: { id: trip.id } })}
+                  label="💬 Message Host Privately (1-on-1)"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/trips/[id]/chat",
+                      params: { id: trip.id, partnerId: trip.leadId, isGroup: "false" },
+                    })
+                  }
                   variant="primary"
                   size="lg"
+                  style={styles.actionBtn}
+                />
+                <Button
+                  label="📢 View Trip Announcements & Updates"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/trips/[id]/chat",
+                      params: { id: trip.id, isGroup: "true" },
+                    })
+                  }
+                  variant="secondary"
+                  size="md"
                   style={styles.actionBtn}
                 />
                 <ContactPhoneReveal tripId={trip.id} targetUserId={trip.leadId} />

@@ -38,7 +38,7 @@ export function ChatScreen() {
   const { session } = useAuthSession();
   const { trip, refresh: refreshTrip } = useTripDetail(tripId);
 
-  const isHost = trip && session?.user.id === trip.leadId;
+  const isHost = Boolean(trip && session?.user.id === trip.leadId);
   const groupChatEnabled = Boolean(trip?.groupChatEnabled);
 
   // Active target state
@@ -46,7 +46,7 @@ export function ChatScreen() {
     initialPartnerId || (!isHost ? trip?.leadId : undefined),
   );
   const [isGroupMode, setIsGroupMode] = useState<boolean>(
-    initialIsGroup === "true" && groupChatEnabled,
+    initialIsGroup === "true" || (!initialPartnerId && isHost && !selectedPartnerId),
   );
   const [togglingGroup, setTogglingGroup] = useState(false);
 
@@ -120,7 +120,7 @@ export function ChatScreen() {
           setMemberMap(map);
           setApprovedMembers(approvedList);
 
-          // If host and no partner selected, default to first passenger
+          // If host and no partner selected, default to first passenger if not in group mode
           if (isHost && !selectedPartnerId && approvedList.length > 0 && !isGroupMode) {
             setSelectedPartnerId(approvedList[0].id);
           }
@@ -136,11 +136,6 @@ export function ChatScreen() {
     try {
       await setTripGroupChatEnabled(tripId, !groupChatEnabled);
       await refreshTrip();
-      if (!groupChatEnabled) {
-        setIsGroupMode(true);
-      } else {
-        setIsGroupMode(false);
-      }
     } finally {
       setTogglingGroup(false);
     }
@@ -163,39 +158,72 @@ export function ChatScreen() {
   const partnerInfo = activePartnerId ? memberMap.get(activePartnerId) : undefined;
   const hostInfo = trip?.leadId ? memberMap.get(trip.leadId) : undefined;
 
+  // Title logic
   const chatTitle = isGroupMode
-    ? `👥 Group Chat: ${trip?.destination || "Trip"}`
+    ? groupChatEnabled
+      ? `👥 Group Chat: ${trip?.destination || "Trip"}`
+      : `📢 Announcements: ${trip?.destination || "Trip"}`
     : isHost
-    ? `💬 Chat with ${partnerInfo?.name || "Passenger"}`
-    : `💬 Chat with Host: ${hostInfo?.name || "Host"}`;
+    ? `💬 1-on-1: ${partnerInfo?.name || "Passenger"}`
+    : `💬 1-on-1: Host ${hostInfo?.name || ""}`;
+
+  // Can user post in group mode?
+  // In Broadcast mode (default), ONLY the host can post in the group.
+  // In Open Discussion mode, everyone approved can post.
+  const canPostInGroup = isHost || groupChatEnabled;
+  const canSendMessages = !isGroupMode || canPostInGroup;
 
   function renderMessage({ item }: { item: Message }) {
     const isMine = item.senderId === session?.user.id;
-    const isItemHost = trip && item.senderId === trip.leadId;
+    const isItemHost = Boolean(trip && item.senderId === trip.leadId);
     const sender = memberMap.get(item.senderId);
     const timeString = new Date(item.sentAt).toLocaleTimeString(undefined, {
       hour: "2-digit",
       minute: "2-digit",
     });
 
+    // In Broadcast Mode (default), co-passengers' profiles are shielded from other passengers
+    const isPassengerPrivacyShielded =
+      isGroupMode && !groupChatEnabled && !isHost && !isItemHost;
+
+    const senderDisplayName = isItemHost
+      ? `${sender?.name || "Trip Host"} (Host)`
+      : isPassengerPrivacyShielded
+      ? "Co-Traveler"
+      : sender?.name || "Co-Traveler";
+
+    const canNavigateToProfile = !isPassengerPrivacyShielded;
+
     return (
       <View style={[styles.messageRow, isMine ? styles.messageRowMine : styles.messageRowOther]}>
         {!isMine && (
           <Pressable
-            onPress={() => router.push({ pathname: "/profile/[id]", params: { id: item.senderId } })}
+            disabled={!canNavigateToProfile}
+            onPress={() =>
+              canNavigateToProfile &&
+              router.push({ pathname: "/profile/[id]", params: { id: item.senderId } })
+            }
             style={styles.avatarWrap}
           >
-            <Avatar name={sender?.name || "Traveler"} uri={sender?.photoUrl} size="sm" />
+            <Avatar
+              name={isPassengerPrivacyShielded ? "Co-Traveler" : sender?.name || "Traveler"}
+              uri={isPassengerPrivacyShielded ? undefined : sender?.photoUrl}
+              size="sm"
+            />
           </Pressable>
         )}
 
         <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
           {!isMine && (
             <Pressable
-              onPress={() => router.push({ pathname: "/profile/[id]", params: { id: item.senderId } })}
+              disabled={!canNavigateToProfile}
+              onPress={() =>
+                canNavigateToProfile &&
+                router.push({ pathname: "/profile/[id]", params: { id: item.senderId } })
+              }
               style={styles.senderHeader}
             >
-              <Text style={styles.senderName}>{sender?.name || "Co-Traveler"}</Text>
+              <Text style={styles.senderName}>{senderDisplayName}</Text>
               {isItemHost && <Text style={styles.hostBadgeTag}>👑 Host</Text>}
             </Pressable>
           )}
@@ -220,12 +248,8 @@ export function ChatScreen() {
   }
 
   return (
-    <Screen
-      showBack
-      title={chatTitle}
-      rightAction={<SosButton tripId={tripId} />}
-    >
-      {/* Trip Info Header Card */}
+    <Screen showBack title={chatTitle} rightAction={<SosButton tripId={tripId} />}>
+      {/* Trip Info & Group Control Banner */}
       {trip && (
         <View style={styles.tripHeaderCard}>
           <View style={{ flex: 1 }}>
@@ -246,10 +270,11 @@ export function ChatScreen() {
           {isHost ? (
             <Pressable
               onPress={handleToggleGroupChat}
+              disabled={togglingGroup}
               style={[styles.hostToggleBtn, groupChatEnabled && styles.hostToggleBtnActive]}
             >
               <Text style={[styles.hostToggleText, groupChatEnabled && styles.hostToggleTextActive]}>
-                {groupChatEnabled ? "👥 Group: ON" : "🔒 1-on-1 Mode"}
+                {groupChatEnabled ? "👥 Open Discussion: ON" : "📢 Broadcast Only"}
               </Text>
             </Pressable>
           ) : (
@@ -263,8 +288,8 @@ export function ChatScreen() {
         </View>
       )}
 
-      {/* Host / Participant Channel Switcher */}
-      {isHost && (approvedMembers.length > 1 || groupChatEnabled) && (
+      {/* Host Navigation Channels (Group Channel + 1-on-1 with each passenger) */}
+      {isHost && (
         <View style={styles.channelSwitcherBar}>
           <FlatList
             horizontal
@@ -272,6 +297,16 @@ export function ChatScreen() {
             data={approvedMembers}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.channelSwitcherContent}
+            ListHeaderComponent={
+              <Pressable
+                style={[styles.channelChip, isGroupMode && styles.channelChipActive]}
+                onPress={() => setIsGroupMode(true)}
+              >
+                <Text style={[styles.channelChipText, isGroupMode && styles.channelChipTextActive]}>
+                  {groupChatEnabled ? "👥 Trip Group Chat" : "📢 Trip Announcements"}
+                </Text>
+              </Pressable>
+            }
             renderItem={({ item }) => {
               const active = !isGroupMode && activePartnerId === item.id;
               return (
@@ -283,36 +318,24 @@ export function ChatScreen() {
                   }}
                 >
                   <Text style={[styles.channelChipText, active && styles.channelChipTextActive]}>
-                    💬 {item.name || "Passenger"}
+                    💬 1-on-1: {item.name || "Passenger"}
                   </Text>
                 </Pressable>
               );
             }}
-            ListFooterComponent={
-              groupChatEnabled ? (
-                <Pressable
-                  style={[styles.channelChip, isGroupMode && styles.channelChipActive]}
-                  onPress={() => setIsGroupMode(true)}
-                >
-                  <Text style={[styles.channelChipText, isGroupMode && styles.channelChipTextActive]}>
-                    👥 Group Chat
-                  </Text>
-                </Pressable>
-              ) : null
-            }
           />
         </View>
       )}
 
-      {/* Passenger Group Switcher (only if Host enabled group chat) */}
-      {!isHost && groupChatEnabled && (
+      {/* Passenger Navigation Channels (1-on-1 with Host + Trip Broadcast/Group Channel) */}
+      {!isHost && (
         <View style={styles.channelSwitcherBar}>
           <Pressable
             style={[styles.channelChip, !isGroupMode && styles.channelChipActive]}
             onPress={() => setIsGroupMode(false)}
           >
             <Text style={[styles.channelChipText, !isGroupMode && styles.channelChipTextActive]}>
-              💬 1-on-1 with Host
+              💬 1-on-1 with Host {hostInfo?.name ? `(${hostInfo.name})` : ""}
             </Text>
           </Pressable>
           <Pressable
@@ -320,21 +343,27 @@ export function ChatScreen() {
             onPress={() => setIsGroupMode(true)}
           >
             <Text style={[styles.channelChipText, isGroupMode && styles.channelChipTextActive]}>
-              👥 Trip Group Chat
+              {groupChatEnabled ? "👥 Trip Group Chat" : "📢 Trip Announcements"}
             </Text>
           </Pressable>
         </View>
       )}
 
-      {/* Privacy Mode Notice Bar */}
+      {/* Privacy & Channel Explainer Bar */}
       <View style={styles.privacyModeNotice}>
-        <Text style={styles.privacyModeIcon}>{isGroupMode ? "👥" : "🔒"}</Text>
+        <Text style={styles.privacyModeIcon}>
+          {isGroupMode ? (groupChatEnabled ? "👥" : "📢") : "🔒"}
+        </Text>
         <Text style={styles.privacyModeText}>
           {isGroupMode
-            ? "Group Chat: Visible to all approved co-travelers (enabled by Trip Host)."
+            ? groupChatEnabled
+              ? "Open Group Discussion: Visible to all confirmed travelers on this journey."
+              : isHost
+              ? "Broadcast Mode: Only you can post updates. Passenger identities are shielded from each other."
+              : "Trip Announcements: Official updates from Trip Host. Passenger identities remain private."
             : isHost
-            ? `Private 1-on-1 chat with ${partnerInfo?.name || "this traveler"}. Co-travelers cannot see this.`
-            : `Private 1-on-1 chat with Host (${hostInfo?.name || "Host"}). No other passengers can see this.`}
+            ? `Private 1-on-1 Chat with ${partnerInfo?.name || "Passenger"}. Completely isolated and never shared in any group.`
+            : `Private 1-on-1 Chat with Host (${hostInfo?.name || "Driver"}). Completely isolated and never shared in any group.`}
         </Text>
       </View>
 
@@ -350,12 +379,22 @@ export function ChatScreen() {
         ListEmptyComponent={
           !loading ? (
             <EmptyState
-              icon={isGroupMode ? "👥" : "💬"}
-              title={isGroupMode ? "Welcome to the group chat!" : `Start 1-on-1 Chat with ${partnerInfo?.name || (!isHost ? "Host" : "Passenger")}`}
+              icon={isGroupMode ? (groupChatEnabled ? "👥" : "📢") : "🔒"}
+              title={
+                isGroupMode
+                  ? groupChatEnabled
+                    ? "Welcome to the Group Chat!"
+                    : "Trip Broadcast Announcements"
+                  : `1-on-1 Private Chat with ${partnerInfo?.name || (!isHost ? "Trip Host" : "Passenger")}`
+              }
               description={
                 isGroupMode
-                  ? "Coordinate departure times and music vibes with the entire roadtrip group."
-                  : "Private coordination between you and the host/traveler. Avoid sharing off-platform contact info."
+                  ? groupChatEnabled
+                    ? "Discuss travel plans, playlists, and stops together with your fellow approved roadtrippers."
+                    : isHost
+                    ? "Post departure timings, exact car location, and route updates for all your confirmed passengers here."
+                    : "The trip host will post official journey updates and pickup coordinates here."
+                  : "Direct private conversation for personal questions, luggage, and pickup specifics. Confidential between you two."
               }
             />
           ) : null
@@ -367,57 +406,81 @@ export function ChatScreen() {
         <View style={styles.warningCard}>
           <Text style={styles.warningIcon}>🛡️</Text>
           <Text style={styles.warningText}>
-            For community safety against fraud, sharing direct phone numbers or off-platform payment links is restricted. Use Convoy's verified in-app features.
+            For community safety against fraud, sharing direct phone numbers or off-platform payment
+            links is restricted. Use Convoy's verified in-app features.
           </Text>
         </View>
       )}
 
-      {/* Quick Coordination Chips */}
-      <View style={styles.quickChipsBar}>
-        <FlatList
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          data={QUICK_CHIPS}
-          keyExtractor={(item) => item}
-          contentContainerStyle={styles.quickChipsContent}
-          renderItem={({ item }) => (
-            <Pressable
-              style={({ pressed }) => [styles.quickChip, pressed && styles.quickChipPressed]}
-              onPress={() => handleSend(item)}
-            >
-              <Text style={styles.quickChipText}>{item}</Text>
-            </Pressable>
-          )}
-        />
-      </View>
-
-      {/* Message Composer Dock */}
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder={
-              isGroupMode
-                ? "Type a message to group..."
-                : `Message ${partnerInfo?.name || (isHost ? "passenger" : "host")} directly...`
-            }
-            placeholderTextColor={colors.inkSubtle}
-            value={draft}
-            onChangeText={setDraft}
-            multiline
-            numberOfLines={2}
-          />
-          <Button
-            label="Send"
-            onPress={() => handleSend()}
-            loading={sending}
-            disabled={!draft.trim() || draftLooksFlagged}
-            variant="primary"
-            size="md"
-            style={styles.sendBtn}
+      {/* Quick Coordination Chips (Only shown if user can post) */}
+      {canSendMessages && (
+        <View style={styles.quickChipsBar}>
+          <FlatList
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            data={QUICK_CHIPS}
+            keyExtractor={(item) => item}
+            contentContainerStyle={styles.quickChipsContent}
+            renderItem={({ item }) => (
+              <Pressable
+                style={({ pressed }) => [styles.quickChip, pressed && styles.quickChipPressed]}
+                onPress={() => handleSend(item)}
+              >
+                <Text style={styles.quickChipText}>{item}</Text>
+              </Pressable>
+            )}
           />
         </View>
-      </KeyboardAvoidingView>
+      )}
+
+      {/* Message Composer Dock or Broadcast Locked Notice */}
+      {canSendMessages ? (
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder={
+                isGroupMode
+                  ? "Post update to trip channel..."
+                  : `Message ${partnerInfo?.name || (isHost ? "passenger" : "host")} directly (private)...`
+              }
+              placeholderTextColor={colors.inkSubtle}
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              numberOfLines={2}
+            />
+            <Button
+              label="Send"
+              onPress={() => handleSend()}
+              loading={sending}
+              disabled={!draft.trim() || draftLooksFlagged}
+              variant="primary"
+              size="md"
+              style={styles.sendBtn}
+            />
+          </View>
+        </KeyboardAvoidingView>
+      ) : (
+        <View style={styles.broadcastLockedBar}>
+          <View style={styles.broadcastLockedTextWrap}>
+            <Text style={styles.broadcastLockedTitle}>📢 Announcements Only Channel</Text>
+            <Text style={styles.broadcastLockedSub}>
+              Only the Trip Host can post updates in this channel. For personal queries, chat with the host 1-on-1.
+            </Text>
+          </View>
+          <Button
+            label="💬 Chat 1-on-1 with Host"
+            onPress={() => {
+              setIsGroupMode(false);
+              setSelectedPartnerId(trip?.leadId);
+            }}
+            variant="primary"
+            size="sm"
+            style={styles.broadcastLockedBtn}
+          />
+        </View>
+      )}
     </Screen>
   );
 }
@@ -491,7 +554,7 @@ const styles = StyleSheet.create({
   channelChip: {
     backgroundColor: colors.surfaceSubtle,
     paddingHorizontal: spacing.md,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: radius.full,
     borderWidth: 1,
     borderColor: colors.line,
@@ -512,59 +575,63 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: colors.surfaceSubtle,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.md,
     marginBottom: spacing.xs,
-    gap: 6,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
   },
   privacyModeIcon: {
-    fontSize: 12,
+    fontSize: 14,
   },
   privacyModeText: {
     ...typography.caption,
     color: colors.inkSubtle,
     fontSize: 11,
     flex: 1,
+    lineHeight: 15,
   },
   list: {
     flex: 1,
   },
   listContent: {
     paddingVertical: spacing.md,
-    gap: spacing.xs,
+    paddingHorizontal: spacing.xs,
+    gap: spacing.md,
   },
   messageRow: {
-    marginVertical: 4,
     flexDirection: "row",
     alignItems: "flex-end",
     gap: spacing.xs,
+    maxWidth: "85%",
   },
   messageRowMine: {
-    justifyContent: "flex-end",
+    alignSelf: "flex-end",
+    flexDirection: "row-reverse",
   },
   messageRowOther: {
-    justifyContent: "flex-start",
+    alignSelf: "flex-start",
   },
   avatarWrap: {
     marginBottom: 2,
   },
   bubble: {
-    maxWidth: "80%",
-    borderRadius: radius.xl,
+    borderRadius: radius.lg,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
+    paddingVertical: spacing.sm,
     ...shadows.sm,
   },
   bubbleMine: {
     backgroundColor: colors.accent,
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: 2,
   },
   bubbleOther: {
     backgroundColor: colors.paper,
+    borderBottomLeftRadius: 2,
     borderWidth: 1,
-    borderColor: colors.lineLight,
-    borderBottomLeftRadius: 4,
+    borderColor: colors.line,
   },
   senderHeader: {
     flexDirection: "row",
@@ -574,93 +641,93 @@ const styles = StyleSheet.create({
   },
   senderName: {
     ...typography.captionBold,
-    color: colors.accent,
-    fontSize: 12,
+    color: colors.inkMuted,
+    fontSize: 11,
   },
   hostBadgeTag: {
+    ...typography.captionBold,
+    color: colors.accent,
     fontSize: 10,
     backgroundColor: colors.surfaceSubtle,
     paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: radius.xs,
-    color: colors.inkMuted,
   },
   bubbleTextMine: {
     ...typography.body,
-    color: colors.inkLight,
-    lineHeight: 20,
+    color: colors.paper,
     fontSize: 14,
   },
   bubbleTextOther: {
     ...typography.body,
     color: colors.ink,
-    lineHeight: 20,
     fontSize: 14,
   },
   bubbleMeta: {
     flexDirection: "row",
-    justifyContent: "flex-end",
     alignItems: "center",
+    justifyContent: "flex-end",
     gap: 4,
-    marginTop: 3,
+    marginTop: 4,
   },
   timeTextMine: {
-    fontSize: 10,
+    ...typography.caption,
     color: "rgba(255, 255, 255, 0.75)",
+    fontSize: 10,
   },
   timeTextOther: {
-    fontSize: 10,
+    ...typography.caption,
     color: colors.inkSubtle,
+    fontSize: 10,
   },
   checkmarks: {
-    fontSize: 10,
+    fontSize: 9,
     color: "rgba(255, 255, 255, 0.85)",
   },
   flaggedContainer: {
     marginTop: 4,
     paddingTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255, 255, 255, 0.2)",
-  },
-  flaggedNoteOther: {
-    ...typography.caption,
-    color: colors.statusFlagged,
-    fontSize: 11,
+    borderTopWidth: 0.5,
+    borderTopColor: "rgba(0, 0, 0, 0.1)",
   },
   flaggedNoteMine: {
     ...typography.caption,
-    color: colors.inkLight,
-    opacity: 0.9,
-    fontStyle: "italic",
-    fontSize: 11,
+    color: "#FEE2E2",
+    fontSize: 10,
+  },
+  flaggedNoteOther: {
+    ...typography.caption,
+    color: "#DC2626",
+    fontSize: 10,
   },
   warningCard: {
     flexDirection: "row",
-    backgroundColor: colors.statusPendingLight,
-    borderRadius: radius.md,
-    padding: spacing.sm + 2,
-    borderWidth: 1,
-    borderColor: "rgba(217, 119, 6, 0.2)",
-    marginBottom: spacing.xs,
     alignItems: "center",
     gap: spacing.xs,
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.md,
+    marginBottom: spacing.xs,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
   },
   warningIcon: {
-    fontSize: 16,
+    fontSize: 14,
   },
   warningText: {
     ...typography.caption,
-    color: colors.statusPending,
+    color: "#92400E",
     fontSize: 11,
     flex: 1,
-    lineHeight: 15,
+    lineHeight: 14,
   },
   quickChipsBar: {
     paddingVertical: 4,
+    marginBottom: 4,
   },
   quickChipsContent: {
     gap: spacing.xs,
-    paddingHorizontal: 2,
   },
   quickChip: {
     backgroundColor: colors.surfaceSubtle,
@@ -675,30 +742,58 @@ const styles = StyleSheet.create({
   },
   quickChipText: {
     ...typography.caption,
-    color: colors.inkMuted,
-    fontSize: 11.5,
+    color: colors.ink,
+    fontSize: 11,
   },
   inputContainer: {
     flexDirection: "row",
-    gap: spacing.sm,
-    paddingTop: spacing.xs,
-    alignItems: "center",
+    alignItems: "flex-end",
+    gap: spacing.xs,
+    backgroundColor: colors.paper,
+    padding: spacing.xs,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.line,
+    ...shadows.sm,
   },
   input: {
     flex: 1,
-    backgroundColor: colors.paper,
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: colors.line,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
     ...typography.body,
-    fontSize: 13.5,
     color: colors.ink,
-    maxHeight: 80,
+    fontSize: 14,
+    maxHeight: 100,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   sendBtn: {
-    minWidth: 70,
+    alignSelf: "flex-end",
+  },
+  broadcastLockedBar: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    gap: spacing.sm,
+    alignItems: "center",
+  },
+  broadcastLockedTextWrap: {
+    alignItems: "center",
+    gap: 2,
+  },
+  broadcastLockedTitle: {
+    ...typography.captionBold,
+    color: colors.ink,
+    fontSize: 13,
+  },
+  broadcastLockedSub: {
+    ...typography.caption,
+    color: colors.inkSubtle,
+    fontSize: 11,
+    textAlign: "center",
+    lineHeight: 15,
+  },
+  broadcastLockedBtn: {
+    width: "100%",
   },
 });
-

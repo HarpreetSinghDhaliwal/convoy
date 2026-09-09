@@ -77,14 +77,18 @@ export function ChatsHubScreen() {
             });
 
             const cardTitle = item.isGroup
-              ? `👥 ${item.destination} (Group)`
-              : `💬 ${item.partnerName || (item.isLead ? "Passenger" : "Host")}`;
+              ? item.groupChatEnabled
+                ? `👥 ${item.destination} (Group Discussion)`
+                : `📢 ${item.destination} (Announcements)`
+              : item.isLead
+              ? `💬 1-on-1: ${item.partnerName || "Passenger"}`
+              : `💬 1-on-1 with Host: ${item.partnerName || "Driver"}`;
 
             const badgeLabel = item.isGroup
-              ? "Group 👥"
-              : item.isLead
-              ? "Passenger"
-              : "Host 👑";
+              ? item.groupChatEnabled
+                ? "Group 👥"
+                : "Broadcast 📢"
+              : "Private 1-on-1 🔒";
 
             return (
               <Card
@@ -93,7 +97,7 @@ export function ChatsHubScreen() {
               >
                 <View style={styles.chatCardRow}>
                   <Avatar
-                    name={item.isGroup ? "Group" : (item.partnerName || "Traveler")}
+                    name={item.isGroup ? (item.groupChatEnabled ? "Group" : "Broadcast") : (item.partnerName || "Traveler")}
                     uri={item.isGroup ? undefined : item.partnerPhotoUrl}
                     size="md"
                   />
@@ -102,7 +106,7 @@ export function ChatsHubScreen() {
                       <Text style={styles.destinationTitle} numberOfLines={1}>
                         {cardTitle}
                       </Text>
-                      <Badge label={badgeLabel} variant={item.isGroup ? "neutral" : item.isLead ? "neutral" : "accent"} />
+                      <Badge label={badgeLabel} variant={item.isGroup ? "neutral" : "accent"} />
                     </View>
                     <Text style={styles.routeSub} numberOfLines={1}>
                       🚗 {item.destination} • 📍 {item.originLabel}
@@ -113,7 +117,9 @@ export function ChatsHubScreen() {
                     >
                       {item.lastMessage
                         ? `${item.lastMessage.senderId === session?.user.id ? "You: " : ""}${item.lastMessage.body}`
-                        : "No messages yet — tap to chat 1-on-1!"}
+                        : item.isGroup
+                        ? "Official trip updates & announcements"
+                        : "Private 1-on-1 chat · Tap to coordinate"}
                     </Text>
                   </View>
                   {hasUnread && (
@@ -129,9 +135,9 @@ export function ChatsHubScreen() {
             !loading ? (
               <View style={styles.emptyWrap}>
                 <Text style={styles.emptyIcon}>💬</Text>
-                <Text style={styles.emptyTitle}>No active 1-on-1 chats</Text>
+                <Text style={styles.emptyTitle}>No active chats yet</Text>
                 <Text style={styles.emptySub}>
-                  When you host a trip or join a ride, your direct 1-on-1 coordination chats with the host or passengers will appear here.
+                  When you host or join a journey, your private 1-on-1 driver-passenger chats and trip announcement channels will appear here.
                 </Text>
                 <View style={styles.emptyActions}>
                   <Button

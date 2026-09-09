@@ -50,21 +50,11 @@ export async function fetchMessages(
   if (options?.partnerId && options?.currentUserId && !options.isGroup) {
     const { partnerId, currentUserId } = options;
     return all.filter((m) => {
-      // Explicit 1-on-1 between these two users
-      if (
+      // Explicit 1-on-1 between these two specific users only
+      return (
         (m.senderId === currentUserId && m.recipientId === partnerId) ||
         (m.senderId === partnerId && m.recipientId === currentUserId)
-      ) {
-        return true;
-      }
-      // Or legacy unrouted messages from partner or self
-      if (
-        !m.recipientId &&
-        (m.senderId === partnerId || m.senderId === currentUserId)
-      ) {
-        return true;
-      }
-      return false;
+      );
     });
   }
 
@@ -174,7 +164,7 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
       (m) => m.trip_id === t.id && m.user_id !== userId,
     );
 
-    // 1-on-1 direct chats with each member
+    // 1-on-1 direct chats with each approved passenger
     membersOnThisTrip.forEach((m) => {
       const memberInfo = usersMap.get(m.user_id);
       const partnerId = m.user_id;
@@ -184,8 +174,7 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
         (msg) =>
           msg.tripId === t.id &&
           ((msg.senderId === userId && msg.recipientId === partnerId) ||
-            (msg.senderId === partnerId && msg.recipientId === userId) ||
-            (!msg.recipientId && (msg.senderId === partnerId || msg.senderId === userId))),
+            (msg.senderId === partnerId && msg.recipientId === userId)),
       );
 
       const lastMessage = pairMessages[0];
@@ -205,7 +194,7 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
         leadPhotoUrl: usersMap.get(t.lead_id)?.photo_url,
         isLead: true,
         partnerId,
-        partnerName: memberInfo?.name || "Traveler",
+        partnerName: memberInfo?.name || "Passenger",
         partnerPhotoUrl: memberInfo?.photo_url,
         isGroup: false,
         groupChatEnabled,
@@ -214,33 +203,33 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
       });
     });
 
-    // If Group Chat is enabled, also add the Group Chat card
-    if (groupChatEnabled) {
-      const chatKey = `${t.id}_group`;
-      const groupMessages = allMessages.filter((msg) => msg.tripId === t.id && !msg.recipientId);
-      const lastMessage = groupMessages[0];
-      const lastRead = getChatLastRead(chatKey);
-      const unreadCount = groupMessages.filter(
-        (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > lastRead,
-      ).length;
+    // Trip Broadcast / Group Channel for Host
+    const chatKey = `${t.id}_group`;
+    const groupMessages = allMessages.filter((msg) => msg.tripId === t.id && !msg.recipientId);
+    const lastMessage = groupMessages[0];
+    const lastRead = getChatLastRead(chatKey);
+    const unreadCount = groupMessages.filter(
+      (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > lastRead,
+    ).length;
 
-      chats.push({
-        tripId: t.id,
-        chatId: chatKey,
-        destination: t.destination,
-        originLabel: t.origin_label,
-        departAt: t.depart_at,
-        leadId: t.lead_id,
-        leadName: usersMap.get(t.lead_id)?.name,
-        leadPhotoUrl: usersMap.get(t.lead_id)?.photo_url,
-        isLead: true,
-        partnerName: "Trip Group Chat (All Co-Travelers)",
-        isGroup: true,
-        groupChatEnabled: true,
-        lastMessage,
-        unreadCount,
-      });
-    }
+    chats.push({
+      tripId: t.id,
+      chatId: chatKey,
+      destination: t.destination,
+      originLabel: t.origin_label,
+      departAt: t.depart_at,
+      leadId: t.lead_id,
+      leadName: usersMap.get(t.lead_id)?.name,
+      leadPhotoUrl: usersMap.get(t.lead_id)?.photo_url,
+      isLead: true,
+      partnerName: groupChatEnabled
+        ? `Trip Group Discussion`
+        : `Trip Announcements (Broadcast)`,
+      isGroup: true,
+      groupChatEnabled,
+      lastMessage,
+      unreadCount,
+    });
   });
 
   // Process Joined Trips (Passenger)
@@ -254,8 +243,7 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
       (msg) =>
         msg.tripId === t.id &&
         ((msg.senderId === userId && msg.recipientId === partnerId) ||
-          (msg.senderId === partnerId && msg.recipientId === userId) ||
-          (!msg.recipientId && (msg.senderId === partnerId || msg.senderId === userId))),
+          (msg.senderId === partnerId && msg.recipientId === userId)),
     );
 
     const lastMessage = pairMessages[0];
@@ -264,7 +252,7 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
       (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > lastRead,
     ).length;
 
-    // 1-on-1 direct chat with the Host
+    // 1-on-1 direct private chat with the Host
     chats.push({
       tripId: t.id,
       chatId: chatKey,
@@ -276,7 +264,7 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
       leadPhotoUrl: hostInfo?.photo_url,
       isLead: false,
       partnerId,
-      partnerName: hostInfo?.name || "Host",
+      partnerName: hostInfo?.name ? `Host: ${hostInfo.name}` : "Trip Host",
       partnerPhotoUrl: hostInfo?.photo_url,
       isGroup: false,
       groupChatEnabled,
@@ -284,33 +272,33 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
       unreadCount,
     });
 
-    // If host enabled group chat, passenger also gets group chat option
-    if (groupChatEnabled) {
-      const groupChatKey = `${t.id}_group`;
-      const groupMessages = allMessages.filter((msg) => msg.tripId === t.id && !msg.recipientId);
-      const gLastMessage = groupMessages[0];
-      const gLastRead = getChatLastRead(groupChatKey);
-      const gUnreadCount = groupMessages.filter(
-        (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > gLastRead,
-      ).length;
+    // Trip Broadcast / Group Channel for Passenger
+    const groupChatKey = `${t.id}_group`;
+    const groupMessages = allMessages.filter((msg) => msg.tripId === t.id && !msg.recipientId);
+    const gLastMessage = groupMessages[0];
+    const gLastRead = getChatLastRead(groupChatKey);
+    const gUnreadCount = groupMessages.filter(
+      (msg) => msg.senderId !== userId && new Date(msg.sentAt).getTime() > gLastRead,
+    ).length;
 
-      chats.push({
-        tripId: t.id,
-        chatId: groupChatKey,
-        destination: t.destination,
-        originLabel: t.origin_label,
-        departAt: t.depart_at,
-        leadId: t.lead_id,
-        leadName: hostInfo?.name,
-        leadPhotoUrl: hostInfo?.photo_url,
-        isLead: false,
-        partnerName: "Trip Group Chat (All Co-Travelers)",
-        isGroup: true,
-        groupChatEnabled: true,
-        lastMessage: gLastMessage,
-        unreadCount: gUnreadCount,
-      });
-    }
+    chats.push({
+      tripId: t.id,
+      chatId: groupChatKey,
+      destination: t.destination,
+      originLabel: t.origin_label,
+      departAt: t.depart_at,
+      leadId: t.lead_id,
+      leadName: hostInfo?.name,
+      leadPhotoUrl: hostInfo?.photo_url,
+      isLead: false,
+      partnerName: groupChatEnabled
+        ? `Trip Group Discussion`
+        : `Trip Announcements (Broadcast)`,
+      isGroup: true,
+      groupChatEnabled,
+      lastMessage: gLastMessage,
+      unreadCount: gUnreadCount,
+    });
   });
 
   return chats;
