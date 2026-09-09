@@ -43,13 +43,14 @@ export function useTripChat(
     return subscribeToTripMessages(tripId, (message) => {
       // Filter incoming realtime message based on 1-on-1 vs group
       if (isGroup && message.recipientId) return;
-      if (!isGroup && partnerId && currentUserId) {
-        const isPair =
-          (message.senderId === currentUserId && message.recipientId === partnerId) ||
-          (message.senderId === partnerId && message.recipientId === currentUserId) ||
-          (!message.recipientId &&
-            (message.senderId === partnerId || message.senderId === currentUserId));
-        if (!isPair) return;
+      if (!isGroup) {
+        if (!message.recipientId) return; // Ignore group broadcasts in 1-on-1 chat
+        if (partnerId && currentUserId) {
+          const isPair =
+            (message.senderId === currentUserId && message.recipientId === partnerId) ||
+            (message.senderId === partnerId && message.recipientId === currentUserId);
+          if (!isPair) return;
+        }
       }
 
       setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
