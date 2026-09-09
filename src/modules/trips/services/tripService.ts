@@ -1,0 +1,243 @@
+import { supabase } from "@/lib/supabase/client";
+import type {
+  CreateTripInput,
+  RequestToJoinOptions,
+  Trip,
+  TripCheckpoint,
+  TripFilters,
+  TripMember,
+  TripMemberStatus,
+} from "../types";
+
+// Maps this module's camelCase domain types to/from Postgres's snake_case
+// rows in one place — nothing outside this file should know the DB's
+// column naming, only the Trip/TripMember shape.
+
+function rowToTrip(row: Record<string, unknown>): Trip {
+  return {
+    id: row.id as string,
+    leadId: row.lead_id as string,
+    destination: row.destination as string,
+    originLabel: row.origin_label as string,
+    originLat: Number(row.origin_lat),
+    originLng: Number(row.origin_lng),
+    destinationLat: Number(row.destination_lat),
+    destinationLng: Number(row.destination_lng),
+    departAt: row.depart_at as string,
+    isRoundTrip: row.is_round_trip as boolean,
+    returnDepartAt: (row.return_depart_at as string) ?? null,
+    seatsTotal: row.seats_total as number,
+    pricePerSeat: Number(row.price_per_seat),
+    womenOnly: row.women_only as boolean,
+    shortNote: (row.short_note as string) ?? null,
+    description: (row.description as string) ?? null,
+    inclusions: (row.inclusions as Trip["inclusions"]) ?? null,
+    links: (row.links as Trip["links"]) ?? null,
+    published: row.published as boolean,
+    cancelledAt: (row.cancelled_at as string) ?? null,
+    createdAt: row.created_at as string,
+  };
+}
+
+function rowToMember(row: Record<string, unknown>): TripMember {
+  return {
+    id: row.id as string,
+    tripId: row.trip_id as string,
+    userId: row.user_id as string,
+    pickupPointId: (row.pickup_point_id as string) ?? null,
+    status: row.status as TripMemberStatus,
+    joinedAt: row.joined_at as string,
+    requestedLat: row.requested_lat != null ? Number(row.requested_lat) : null,
+    requestedLng: row.requested_lng != null ? Number(row.requested_lng) : null,
+  };
+}
+
+export async function createTrip(leadId: string, input: CreateTripInput): Promise<Trip> {
+  const { data, error } = await supabase
+    .from("trips")
+    .insert({
+      lead_id: leadId,
+      destination: input.destination,
+      origin_label: input.originLabel,
+      origin_lat: input.originLat,
+      origin_lng: input.originLng,
+      destination_lat: input.destinationLat,
+      destination_lng: input.destinationLng,
+      depart_at: input.departAt,
+      is_round_trip: input.isRoundTrip ?? false,
+      return_depart_at: input.returnDepartAt ?? null,
+      seats_total: input.seatsTotal,
+      price_per_seat: input.pricePerSeat,
+      women_only: input.womenOnly ?? false,
+      short_note: input.shortNote ?? null,
+      description: input.description ?? null,
+      inclusions: input.inclusions ?? null,
+      published: true,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  const trip = rowToTrip(data);
+
+  if (input.checkpoints?.length) {
+    const { error: checkpointError } = await supabase.from("trip_checkpoints").insert(
+      input.checkpoints.map((cp, i) => ({
+        trip_id: trip.id,
+        label: cp.label,
+        lat: cp.lat,
+        lng: cp.lng,
+        sort_order: i,
+      })),
+    );
+    // Not fatal — same reasoning as the route-geometry save below: a trip
+    // is still worth publishing without its checkpoints than not at all.
+    if (checkpointError) console.error("createTrip: failed to save checkpoints", checkpointError);
+  }
+
+  return trip;
+}
+
+function rowToCheckpoint(row: Record<string, unknown>): TripCheckpoint {
+  return {
+    id: row.id as string,
+    tripId: row.trip_id as string,
+    label: row.label as string,
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    sortOrder: row.sort_order as number,
+  };
+}
+
+export async function listCheckpoints(tripId: string): Promise<TripCheckpoint[]> {
+  const { data, error } = await supabase
+    .from("trip_checkpoints")
+    .select()
+    .eq("trip_id", tripId)
+    .order("sort_order", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(rowToCheckpoint);
+}
+
+export async function listTrips(filters: TripFilters = {}): Promise<Trip[]> {
+  let query = supabase.from("trips").select().eq("published", true).is("cancelled_at", null);
+
+  if (filters.destination) {
+    query = query.ilike("destination", `%${filters.destination}%`);
+  }
+  if (filters.womenOnlyOnly) {
+    query = query.eq("women_only", true);
+  }
+  if (filters.afterDate) {
+    query = query.gte("depart_at", filters.afterDate);
+  }
+
+  const { data, error } = await query.order("depart_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(rowToTrip);
+}
+
+export async function getTrip(tripId: string): Promise<Trip> {
+  const { data, error } = await supabase.from("trips").select().eq("id", tripId).single();
+  if (error) throw error;
+  return rowToTrip(data);
+}
+
+export async function cancelTrip(tripId: string): Promise<void> {
+  const { error } = await supabase
+    .from("trips")
+    .update({ cancelled_at: new Date().toISOString() })
+    .eq("id", tripId);
+  if (error) throw error;
+}
+
+export async function requestToJoin(
+  tripId: string,
+  userId: string,
+  options: RequestToJoinOptions = {},
+): Promise<void> {
+  const { error } = await supabase.from("trip_members").insert({
+    trip_id: tripId,
+    user_id: userId,
+    pickup_point_id: options.pickupPointId ?? null,
+    requested_lat: options.requestedLat ?? null,
+    requested_lng: options.requestedLng ?? null,
+  });
+  if (error) throw error;
+}
+
+// Phase 05: rough locations submitted by requesters, for the Lead's
+// "suggest a meeting point" flow (pickup-points module). Lives here, not in
+// pickup-points, because it queries trip_members — pickup-points only ever
+// reaches this through trips' public index, never trip_members directly.
+export async function getRequesterLocations(
+  tripId: string,
+): Promise<{ lat: number; lng: number }[]> {
+  const { data, error } = await supabase
+    .from("trip_members")
+    .select("requested_lat, requested_lng")
+    .eq("trip_id", tripId)
+    .not("requested_lat", "is", null)
+    .not("requested_lng", "is", null);
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    lat: Number(row.requested_lat),
+    lng: Number(row.requested_lng),
+  }));
+}
+
+export async function withdrawRequest(memberId: string): Promise<void> {
+  const { error } = await supabase
+    .from("trip_members")
+    .update({ status: "withdrawn" satisfies TripMemberStatus })
+    .eq("id", memberId);
+  if (error) throw error;
+}
+
+export async function leaveTrip(memberId: string): Promise<void> {
+  const { error } = await supabase
+    .from("trip_members")
+    .update({ status: "left" satisfies TripMemberStatus })
+    .eq("id", memberId);
+  if (error) throw error;
+}
+
+export async function getIncomingRequests(tripId: string): Promise<TripMember[]> {
+  const { data, error } = await supabase
+    .from("trip_members")
+    .select()
+    .eq("trip_id", tripId)
+    .eq("status", "requested" satisfies TripMemberStatus);
+  if (error) throw error;
+  return (data ?? []).map(rowToMember);
+}
+
+async function setMemberStatus(memberId: string, status: TripMemberStatus): Promise<void> {
+  const { error } = await supabase.from("trip_members").update({ status }).eq("id", memberId);
+  if (error) throw error;
+}
+
+export async function approveRequest(memberId: string): Promise<void> {
+  return setMemberStatus(memberId, "approved");
+}
+
+export async function declineRequest(memberId: string): Promise<void> {
+  return setMemberStatus(memberId, "declined");
+}
+
+export async function getMyMemberships(userId: string): Promise<TripMember[]> {
+  const { data, error } = await supabase.from("trip_members").select().eq("user_id", userId);
+  if (error) throw error;
+  return (data ?? []).map(rowToMember);
+}
+
+// How many approved seats a trip has left — trips module's own concern, not
+// something the UI should compute by re-deriving membership counts itself.
+export async function getApprovedSeatCount(tripId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("trip_members")
+    .select("id", { count: "exact", head: true })
+    .eq("trip_id", tripId)
+    .eq("status", "approved" satisfies TripMemberStatus);
+  if (error) throw error;
+  return count ?? 0;
+}
