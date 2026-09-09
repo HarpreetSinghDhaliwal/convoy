@@ -53,45 +53,72 @@ function rowToMember(row: Record<string, unknown>): TripMember {
 }
 
 export async function createTrip(leadId: string, input: CreateTripInput): Promise<Trip> {
-  const { data, error } = await supabase
+  const insertPayload: Record<string, any> = {
+    lead_id: leadId,
+    destination: input.destination,
+    origin_label: input.originLabel,
+    origin_lat: input.originLat,
+    origin_lng: input.originLng,
+    destination_lat: input.destinationLat,
+    destination_lng: input.destinationLng,
+    depart_at: input.departAt,
+    seats_total: input.seatsTotal,
+    price_per_seat: input.pricePerSeat,
+    women_only: input.womenOnly ?? false,
+    short_note: input.shortNote ?? null,
+    description: input.description ?? null,
+    inclusions: input.inclusions ?? null,
+    published: true,
+  };
+
+  if (input.isRoundTrip !== undefined) {
+    insertPayload.is_round_trip = input.isRoundTrip;
+  }
+  if (input.returnDepartAt) {
+    insertPayload.return_depart_at = input.returnDepartAt;
+  }
+
+  let { data, error } = await supabase
     .from("trips")
-    .insert({
-      lead_id: leadId,
-      destination: input.destination,
-      origin_label: input.originLabel,
-      origin_lat: input.originLat,
-      origin_lng: input.originLng,
-      destination_lat: input.destinationLat,
-      destination_lng: input.destinationLng,
-      depart_at: input.departAt,
-      is_round_trip: input.isRoundTrip ?? false,
-      return_depart_at: input.returnDepartAt ?? null,
-      seats_total: input.seatsTotal,
-      price_per_seat: input.pricePerSeat,
-      women_only: input.womenOnly ?? false,
-      short_note: input.shortNote ?? null,
-      description: input.description ?? null,
-      inclusions: input.inclusions ?? null,
-      published: true,
-    })
+    .insert(insertPayload)
     .select()
     .single();
-  if (error) throw error;
+
+  // If column error (e.g. is_round_trip or return_depart_at columns not yet applied in remote DB)
+  if (error && (error.message?.includes("is_round_trip") || error.message?.includes("return_depart_at"))) {
+    console.warn("createTrip: is_round_trip column missing on DB, retrying without optional round trip columns");
+    delete insertPayload.is_round_trip;
+    delete insertPayload.return_depart_at;
+    const retry = await supabase.from("trips").insert(insertPayload).select().single();
+    data = retry.data;
+    error = retry.error;
+  }
+
+  if (error) {
+    console.error("createTrip Supabase error:", error);
+    if (error.message?.includes("row-level security")) {
+      throw new Error("Trip creation blocked by safety policy. Please run migration 0016 in Supabase SQL editor or verify account.");
+    }
+    throw new Error(error.message || "Couldn't publish this trip — try again");
+  }
+
   const trip = rowToTrip(data);
 
   if (input.checkpoints?.length) {
-    const { error: checkpointError } = await supabase.from("trip_checkpoints").insert(
-      input.checkpoints.map((cp, i) => ({
-        trip_id: trip.id,
-        label: cp.label,
-        lat: cp.lat,
-        lng: cp.lng,
-        sort_order: i,
-      })),
-    );
-    // Not fatal — same reasoning as the route-geometry save below: a trip
-    // is still worth publishing without its checkpoints than not at all.
-    if (checkpointError) console.error("createTrip: failed to save checkpoints", checkpointError);
+    try {
+      const { error: checkpointError } = await supabase.from("trip_checkpoints").insert(
+        input.checkpoints.map((cp, i) => ({
+          trip_id: trip.id,
+          label: cp.label,
+          lat: cp.lat,
+          lng: cp.lng,
+          sort_order: i,
+        })),
+      );
+      if (checkpointError) console.error("createTrip: failed to save checkpoints", checkpointError);
+    } catch (cpErr) {
+      console.warn("createTrip: checkpoint insert ignored:", cpErr);
+    }
   }
 
   return trip;

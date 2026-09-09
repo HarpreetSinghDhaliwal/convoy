@@ -91,8 +91,10 @@ export function CreateTripScreen() {
       }
 
       router.replace({ pathname: "/trips/[id]", params: { id: trip.id } });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't publish this trip — try again");
+    } catch (err: any) {
+      console.error("CreateTripScreen error:", err);
+      const msg = err?.message || err?.error_description || (typeof err === "string" ? err : "Couldn't publish this trip — try again");
+      setError(msg);
     } finally {
       setSubmitting(false);
     }
