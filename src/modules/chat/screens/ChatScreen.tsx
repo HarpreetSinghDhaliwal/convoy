@@ -50,6 +50,15 @@ export function ChatScreen() {
   );
   const [togglingGroup, setTogglingGroup] = useState(false);
 
+  useEffect(() => {
+    if (initialPartnerId) {
+      setSelectedPartnerId(initialPartnerId);
+      setIsGroupMode(false);
+    } else if (initialIsGroup === "true") {
+      setIsGroupMode(true);
+    }
+  }, [initialPartnerId, initialIsGroup]);
+
   // Approved members list for host selection
   const [approvedMembers, setApprovedMembers] = useState<
     Array<{ id: string; name: string; photoUrl?: string }>
@@ -266,8 +275,8 @@ export function ChatScreen() {
             </Text>
           </View>
 
-          {/* Host Group Toggle Button */}
-          {isHost ? (
+          {/* Group Discussion Toggle (Only visible to Host when on the Group Channel) */}
+          {isHost && isGroupMode ? (
             <Pressable
               onPress={handleToggleGroupChat}
               disabled={togglingGroup}
@@ -282,7 +291,9 @@ export function ChatScreen() {
               onPress={() => router.push({ pathname: "/trips/[id]", params: { id: trip.id } })}
               style={styles.tripDetailsPill}
             >
-              <Text style={styles.tripDetailsPillText}>Trip Details ›</Text>
+              <Text style={styles.tripDetailsPillText}>
+                {isGroupMode ? "Trip Details ›" : "🔒 1-on-1 Private"}
+              </Text>
             </Pressable>
           )}
         </View>
@@ -362,8 +373,8 @@ export function ChatScreen() {
               ? "Broadcast Mode: Only you can post updates. Passenger identities are shielded from each other."
               : "Trip Announcements: Official updates from Trip Host. Passenger identities remain private."
             : isHost
-            ? `Private 1-on-1 Chat with ${partnerInfo?.name || "Passenger"}. Completely isolated and never shared in any group.`
-            : `Private 1-on-1 Chat with Host (${hostInfo?.name || "Driver"}). Completely isolated and never shared in any group.`}
+            ? `Private 1-on-1 with ${partnerInfo?.name || "Passenger"} · Only you two can talk here (nobody else).`
+            : `Private 1-on-1 with Host (${hostInfo?.name || "Driver"}) · Only you two can talk here (nobody else).`}
         </Text>
       </View>
 

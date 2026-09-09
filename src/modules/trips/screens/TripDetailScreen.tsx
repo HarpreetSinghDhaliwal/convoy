@@ -22,6 +22,7 @@ import {
 } from "../services/tripService";
 import { TripCancellationModal } from "../components/TripCancellationModal";
 import { ProfileSummary } from "@/modules/profile";
+import { supabase } from "@/lib/supabase/client";
 
 export function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -39,6 +40,11 @@ export function TripDetailScreen() {
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [selectedPickupId, setSelectedPickupId] = useState<string | null>(null);
 
+  // Host's approved passengers for direct 1-on-1 chats
+  const [approvedPassengers, setApprovedPassengers] = useState<
+    Array<{ id: string; name: string; photoUrl?: string; seats: number }>
+  >([]);
+
   const isLead = useMemo(
     () => !!(trip && session && trip.leadId === session.user.id),
     [trip, session],
@@ -54,6 +60,42 @@ export function TripDetailScreen() {
   const isDeclined = myMembership?.status === "declined";
 
   const hasChatAccess = isLead || isApproved;
+
+  // Load approved passengers when Host views the trip
+  useMemo(() => {
+    async function loadApprovedPassengers() {
+      if (!trip?.id || !isLead) return;
+      const { data: memberRows } = await supabase
+        .from("trip_members")
+        .select("user_id, seats_requested")
+        .eq("trip_id", trip.id)
+        .eq("status", "approved");
+
+      if (!memberRows || memberRows.length === 0) {
+        setApprovedPassengers([]);
+        return;
+      }
+
+      const userIds = memberRows.map((r) => r.user_id as string);
+      const { data: users } = await supabase
+        .from("users")
+        .select("id, name, photo_url")
+        .in("id", userIds);
+
+      const usersMap = new Map((users || []).map((u) => [u.id, u]));
+      const list = memberRows.map((r) => {
+        const u = usersMap.get(r.user_id);
+        return {
+          id: r.user_id,
+          name: u?.name || "Passenger",
+          photoUrl: u?.photo_url,
+          seats: Number(r.seats_requested) || 1,
+        };
+      });
+      setApprovedPassengers(list);
+    }
+    loadApprovedPassengers();
+  }, [trip?.id, isLead]);
 
   async function handleRequestToJoin() {
     if (!trip || !session?.user.id) return;
@@ -322,19 +364,7 @@ export function TripDetailScreen() {
                 </View>
               </View>
               <Button
-                label="💬 1-on-1 Passenger Chats"
-                onPress={() =>
-                  router.push({
-                    pathname: "/trips/[id]/chat",
-                    params: { id: trip.id, isGroup: "false" },
-                  })
-                }
-                variant="primary"
-                size="lg"
-                style={styles.actionBtn}
-              />
-              <Button
-                label="📢 Trip Broadcast & Group Channel"
+                label="📢 Open Trip Group Channel"
                 onPress={() =>
                   router.push({
                     pathname: "/trips/[id]/chat",
@@ -345,6 +375,44 @@ export function TripDetailScreen() {
                 size="md"
                 style={styles.actionBtn}
               />
+
+              {/* Individual 1-on-1 Chats with Each Passenger */}
+              <View style={styles.hostPassengersSection}>
+                <Text style={styles.hostSectionSubTitle}>
+                  💬 1-on-1 Private Chats ({approvedPassengers.length} {approvedPassengers.length === 1 ? "Passenger" : "Passengers"})
+                </Text>
+                {approvedPassengers.length > 0 ? (
+                  approvedPassengers.map((p) => (
+                    <View key={p.id} style={styles.passengerChatRow}>
+                      <Avatar name={p.name} uri={p.photoUrl} size="sm" />
+                      <View style={{ flex: 1, marginLeft: spacing.sm }}>
+                        <Text style={styles.passengerChatName}>{p.name}</Text>
+                        <Text style={styles.passengerChatSeats}>
+                          {p.seats} {p.seats === 1 ? "seat" : "seats"} confirmed
+                        </Text>
+                      </View>
+                      <Button
+                        label="💬 1-on-1 Chat"
+                        onPress={() =>
+                          router.push({
+                            pathname: "/trips/[id]/chat",
+                            params: { id: trip.id, partnerId: p.id, isGroup: "false" },
+                          })
+                        }
+                        variant="primary"
+                        size="sm"
+                      />
+                    </View>
+                  ))
+                ) : (
+                  <View style={styles.emptyPassengersBox}>
+                    <Text style={styles.emptyPassengersText}>
+                      No approved passengers yet. Once you approve join requests, direct 1-on-1 chats with each passenger will appear here.
+                    </Text>
+                  </View>
+                )}
+              </View>
+
               <PickupPointManager tripId={trip.id} />
               <Button
                 label="👥 Manage Join Requests"
@@ -928,5 +996,46 @@ const styles = StyleSheet.create({
     color: colors.statusFlagged,
     textAlign: "center",
     marginBottom: spacing.md,
+  },
+  hostPassengersSection: {
+    marginTop: spacing.md,
+    gap: spacing.sm,
+  },
+  hostSectionSubTitle: {
+    ...typography.captionBold,
+    color: colors.ink,
+    fontSize: 13,
+  },
+  passengerChatRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surfaceSubtle,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  passengerChatName: {
+    ...typography.captionBold,
+    color: colors.ink,
+    fontSize: 13,
+  },
+  passengerChatSeats: {
+    ...typography.caption,
+    color: colors.inkSubtle,
+    fontSize: 11,
+  },
+  emptyPassengersBox: {
+    backgroundColor: colors.surfaceSubtle,
+    padding: spacing.sm + 4,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+  },
+  emptyPassengersText: {
+    ...typography.caption,
+    color: colors.inkSubtle,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });
