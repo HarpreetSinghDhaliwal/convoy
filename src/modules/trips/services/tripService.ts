@@ -257,8 +257,9 @@ export async function requestToJoin(
 }
 
 export function subscribeToMyMemberships(userId: string, onUpdate: () => void): () => void {
+  const channelName = `user-memberships-${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const channel = supabase
-    .channel(`user-memberships-${userId}`)
+    .channel(channelName)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "trip_members", filter: `user_id=eq.${userId}` },

@@ -170,8 +170,9 @@ export function subscribeToTripMessages(
   tripId: string,
   onMessage: (message: Message) => void,
 ): () => void {
+  const channelName = `trip-chat-${tripId}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const channel = supabase
-    .channel(`trip-chat-${tripId}`)
+    .channel(channelName)
     .on(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "messages", filter: `trip_id=eq.${tripId}` },
@@ -190,8 +191,9 @@ export function subscribeToAllUserChatMessages(
 ): () => void {
   if (tripIds.length === 0) return () => {};
 
+  const channelName = `global-user-trip-chats-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const channel = supabase
-    .channel("global-user-trip-chats")
+    .channel(channelName)
     .on(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "messages" },

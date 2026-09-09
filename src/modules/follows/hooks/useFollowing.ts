@@ -29,7 +29,7 @@ export function useFollowing() {
     refresh();
   }, [refresh]);
 
-  async function followUser(followedId: string, viaTripId: string) {
+  async function followUser(followedId: string, viaTripId?: string) {
     if (!session?.user.id) return;
     await follow(session.user.id, followedId, viaTripId);
     refresh();

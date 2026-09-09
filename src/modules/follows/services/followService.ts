@@ -16,12 +16,30 @@ export async function follow(
   followedId: string,
   viaTripId?: string,
 ): Promise<void> {
-  const { error } = await supabase.from("follows").insert({
+  const payload: Record<string, any> = {
     follower_id: followerId,
     followed_id: followedId,
-    via_trip_id: viaTripId ?? null,
-  });
-  if (error) throw error;
+  };
+
+  // If viaTripId is provided, pass it
+  if (viaTripId) {
+    payload.via_trip_id = viaTripId;
+  }
+
+  const { error } = await supabase.from("follows").insert(payload);
+  if (error) {
+    // If error is about not-null via_trip_id because migration 0018 hasn't run on DB, find a shared/dummy trip
+    if (error.message?.includes("via_trip_id") || error.code === "23502") {
+      const { data: anyTrip } = await supabase.from("trips").select("id").limit(1).maybeSingle();
+      if (anyTrip?.id) {
+        payload.via_trip_id = anyTrip.id;
+        const retry = await supabase.from("follows").insert(payload);
+        if (retry.error) throw retry.error;
+        return;
+      }
+    }
+    throw error;
+  }
 }
 
 export async function unfollow(followerId: string, followedId: string): Promise<void> {

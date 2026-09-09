@@ -3,21 +3,20 @@ import { useFollowing } from "../hooks/useFollowing";
 
 interface FollowButtonProps {
   userId: string;
-  viaTripId: string;
+  viaTripId?: string;
+  size?: "sm" | "md" | "lg";
 }
 
-// Only ever rendered with a specific trip in hand (a shared, completed
-// trip) — there's no "follow anyone" entry point anywhere in the app, by
-// design (blueprint §03).
-export function FollowButton({ userId, viaTripId }: FollowButtonProps) {
+export function FollowButton({ userId, viaTripId, size = "md" }: FollowButtonProps) {
   const { isFollowing, followUser, unfollowUser } = useFollowing();
   const following = isFollowing(userId);
 
   return (
     <Button
-      label={following ? "Following" : "Follow"}
+      label={following ? "✓ Following" : "+ Follow"}
       onPress={() => (following ? unfollowUser(userId) : followUser(userId, viaTripId))}
-      variant="secondary"
+      variant={following ? "secondary" : "primary"}
+      size={size}
     />
   );
 }

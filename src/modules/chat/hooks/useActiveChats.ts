@@ -41,7 +41,7 @@ export function useActiveChats() {
     return subscribeToAllUserChatMessages(tripIds, () => {
       load();
     });
-  }, [chats.length, load]);
+  }, [chats.map((c) => c.tripId).join(","), load]);
 
   const totalUnread = chats.reduce((acc, c) => acc + c.unreadCount, 0);
 
