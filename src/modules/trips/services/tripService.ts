@@ -221,58 +221,118 @@ export async function listTrips(filters: TripFilters = {}): Promise<Trip[]> {
     checkpointsByTrip.set(cp.trip_id, list);
   });
 
-  const radiusKm = filters.radiusKm || 35; // 35 km search radius buffer for pinpoint search
+  const maxRadiusKm = filters.radiusKm || 50; // 50 km strict corridor radius for pinpoint search
+
+  // Data structure to hold match metadata for ranking and en-route badges
+  interface MatchMeta {
+    pickupDist: number;
+    pickupLabel: string;
+    isEnRoutePickup: boolean;
+    dropoffDist: number;
+    dropoffLabel: string;
+    isEnRouteDropoff: boolean;
+  }
+
+  const tripMatchMeta = new Map<string, MatchMeta>();
 
   // Filter by Origin & Destination criteria (Pins and Text)
   trips = trips.filter((t) => {
-    const stops = checkpointsByTrip.get(t.id) ?? [];
+    const rawStops = checkpointsByTrip.get(t.id) ?? [];
+    
+    // Ordered itinerary: Origin (0) -> Checkpoint 1 (1) -> ... -> Destination (N)
+    const routeWaypoints = [
+      { label: t.originLabel, lat: t.originLat, lng: t.originLng, isOrigin: true, isDest: false },
+      ...rawStops.map((s) => ({ label: s.label, lat: s.lat, lng: s.lng, isOrigin: false, isDest: false })),
+      { label: t.destination, lat: t.destinationLat, lng: t.destinationLng, isOrigin: false, isDest: true },
+    ];
 
-    // 1. Origin Matching (Text or Pin)
+    let bestPickupIdx = -1;
+    let minPickupDist = Infinity;
+    let matchedPickupLabel = t.originLabel;
+    let isEnRoutePickup = false;
+
+    // 1. Origin / Boarding Point Matching
     if (filters.originLat !== undefined && filters.originLng !== undefined) {
-      const distToOrigin = haversineDistanceKm(
-        filters.originLat,
-        filters.originLng,
-        t.originLat,
-        t.originLng,
-      );
-      const nearOrigin = distToOrigin <= radiusKm;
-      const nearStop = stops.some(
-        (s) =>
-          haversineDistanceKm(filters.originLat!, filters.originLng!, s.lat, s.lng) <= radiusKm,
-      );
-      if (!nearOrigin && !nearStop) return false;
+      for (let i = 0; i < routeWaypoints.length - 1; i++) {
+        const wp = routeWaypoints[i];
+        const dist = haversineDistanceKm(filters.originLat, filters.originLng, wp.lat, wp.lng);
+        if (dist <= maxRadiusKm && dist < minPickupDist) {
+          minPickupDist = dist;
+          bestPickupIdx = i;
+          matchedPickupLabel = wp.label;
+          isEnRoutePickup = !wp.isOrigin;
+        }
+      }
+      if (bestPickupIdx === -1) return false;
     } else if (filters.origin && filters.origin.trim()) {
       const oTerm = filters.origin.trim().toLowerCase();
       const matchOrigin = t.originLabel.toLowerCase().includes(oTerm);
-      const matchStop = stops.some((s) => s.label.toLowerCase().includes(oTerm));
-      if (!matchOrigin && !matchStop) return false;
+      const matchStopIdx = rawStops.findIndex((s) => s.label.toLowerCase().includes(oTerm));
+      if (!matchOrigin && matchStopIdx === -1) return false;
+      bestPickupIdx = matchOrigin ? 0 : matchStopIdx + 1;
+      matchedPickupLabel = matchOrigin ? t.originLabel : rawStops[matchStopIdx].label;
+      isEnRoutePickup = !matchOrigin;
     }
 
-    // 2. Destination Matching (Text or Pin)
+    let bestDropoffIdx = -1;
+    let minDropoffDist = Infinity;
+    let matchedDropoffLabel = t.destination;
+    let isEnRouteDropoff = false;
+
+    // 2. Destination / Dropoff Point Matching
     if (filters.destinationLat !== undefined && filters.destinationLng !== undefined) {
-      const distToDest = haversineDistanceKm(
-        filters.destinationLat,
-        filters.destinationLng,
-        t.destinationLat,
-        t.destinationLng,
-      );
-      const nearDest = distToDest <= (filters.radiusKm || 45);
-      const nearStop = stops.some(
-        (s) =>
-          haversineDistanceKm(filters.destinationLat!, filters.destinationLng!, s.lat, s.lng) <=
-          (filters.radiusKm || 45),
-      );
-      if (!nearDest && !nearStop) return false;
+      const startIndex = bestPickupIdx !== -1 ? bestPickupIdx + 1 : 1;
+      for (let j = startIndex; j < routeWaypoints.length; j++) {
+        const wp = routeWaypoints[j];
+        const dist = haversineDistanceKm(filters.destinationLat, filters.destinationLng, wp.lat, wp.lng);
+        if (dist <= maxRadiusKm && dist < minDropoffDist) {
+          minDropoffDist = dist;
+          bestDropoffIdx = j;
+          matchedDropoffLabel = wp.label;
+          isEnRouteDropoff = !wp.isDest;
+        }
+      }
+      if (bestDropoffIdx === -1) return false;
     } else if (filters.destination && filters.destination.trim()) {
       const dTerm = filters.destination.trim().toLowerCase();
       const matchDest = t.destination.toLowerCase().includes(dTerm);
       const matchOrigin = !filters.origin && t.originLabel.toLowerCase().includes(dTerm);
       const matchNote = (t.shortNote || "").toLowerCase().includes(dTerm);
-      const matchStop = stops.some((s) => s.label.toLowerCase().includes(dTerm));
-      if (!matchDest && !matchStop && !matchOrigin && !matchNote) return false;
+      const matchStopIdx = rawStops.findIndex((s) => s.label.toLowerCase().includes(dTerm));
+
+      if (!matchDest && matchStopIdx === -1 && !matchOrigin && !matchNote) return false;
+
+      // Ensure dropoff occurs after boarding stop along forward route
+      if (matchStopIdx !== -1 && bestPickupIdx !== -1 && matchStopIdx + 1 <= bestPickupIdx) {
+        return false;
+      }
+
+      bestDropoffIdx = matchDest ? routeWaypoints.length - 1 : matchStopIdx + 1;
+      matchedDropoffLabel = matchDest ? t.destination : (rawStops[matchStopIdx]?.label || t.destination);
+      isEnRouteDropoff = !matchDest && matchStopIdx !== -1;
     }
 
+    // Save match metadata for this trip
+    tripMatchMeta.set(t.id, {
+      pickupDist: minPickupDist !== Infinity ? minPickupDist : 0,
+      pickupLabel: matchedPickupLabel,
+      isEnRoutePickup,
+      dropoffDist: minDropoffDist !== Infinity ? minDropoffDist : 0,
+      dropoffLabel: matchedDropoffLabel,
+      isEnRouteDropoff,
+    });
+
     return true;
+  });
+
+  // Sort trips by closest pickup proximity first (e.g., <5km before 45km), then by departure time
+  trips.sort((a, b) => {
+    const metaA = tripMatchMeta.get(a.id);
+    const metaB = tripMatchMeta.get(b.id);
+    if (metaA && metaB && metaA.pickupDist !== metaB.pickupDist) {
+      return metaA.pickupDist - metaB.pickupDist;
+    }
+    return new Date(a.departAt).getTime() - new Date(b.departAt).getTime();
   });
 
   return trips.map((t) => {
