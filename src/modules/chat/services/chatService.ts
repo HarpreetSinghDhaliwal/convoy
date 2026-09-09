@@ -146,12 +146,12 @@ export async function fetchUserActiveChats(userId: string): Promise<ActiveTripCh
   (allApprovedMembers ?? []).forEach((m) => userIdsToFetch.add(m.user_id));
 
   const { data: usersData } = await supabase
-    .from("users")
+    .from("public_profiles")
     .select("id, name, photo_url")
     .in("id", Array.from(userIdsToFetch));
 
   const usersMap = new Map<string, { name: string; photo_url?: string }>();
-  (usersData ?? []).forEach((u) => {
+  (usersData ?? []).forEach((u: any) => {
     usersMap.set(u.id, { name: u.name, photo_url: u.photo_url });
   });
 

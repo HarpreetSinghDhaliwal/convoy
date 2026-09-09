@@ -78,7 +78,7 @@ export function TripDetailScreen() {
 
       const userIds = memberRows.map((r) => r.user_id as string);
       const { data: users } = await supabase
-        .from("users")
+        .from("public_profiles")
         .select("id, name, photo_url")
         .in("id", userIds);
 

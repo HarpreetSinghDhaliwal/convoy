@@ -112,7 +112,7 @@ export function ChatScreen() {
 
       if (allIds.size > 0) {
         const { data: users } = await supabase
-          .from("users")
+          .from("public_profiles")
           .select("id, name, photo_url")
           .in("id", Array.from(allIds));
 
