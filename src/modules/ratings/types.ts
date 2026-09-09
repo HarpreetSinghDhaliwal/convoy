@@ -6,6 +6,9 @@ export interface Rating {
   score: number;
   review: string | null;
   createdAt: string;
+  isExchanged?: boolean;
+  raterName?: string;
+  raterPhotoUrl?: string;
 }
 
 export interface PendingRating {

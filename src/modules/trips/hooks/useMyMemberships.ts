@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuthSession } from "@/modules/auth";
-import { getMyMemberships } from "../services/tripService";
+import { getMyMemberships, subscribeToMyMemberships } from "../services/tripService";
 import type { TripMember } from "../types";
 
 export function useMyMemberships() {
@@ -28,6 +28,15 @@ export function useMyMemberships() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId) return;
+    const unsubscribe = subscribeToMyMemberships(userId, () => {
+      refresh();
+    });
+    return unsubscribe;
+  }, [session?.user.id, refresh]);
 
   return { memberships, loading, refresh };
 }

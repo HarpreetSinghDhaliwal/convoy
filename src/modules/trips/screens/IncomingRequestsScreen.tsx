@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { Screen, Button } from "@/components";
-import { colors, radius, spacing, typography } from "@/theme";
+import { Screen, Button, Card, Badge } from "@/components";
+import { colors, radius, shadows, spacing, typography } from "@/theme";
 import { ProfileSummary, ContactPhoneReveal } from "@/modules/profile";
 import { approveRequest, declineRequest, getIncomingRequests } from "../services/tripService";
 import type { TripMember } from "../types";
@@ -51,47 +51,152 @@ export function IncomingRequestsScreen() {
 
   return (
     <Screen>
-      <Text style={styles.title}>Join requests</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>👥 Join Requests</Text>
+        <Text style={styles.subtitle}>Review travelers requesting to join your roadtrip</Text>
+      </View>
+
       <FlatList
         data={requests}
         keyExtractor={(item) => item.id}
         refreshing={loading}
         onRefresh={load}
-        renderItem={({ item }) => (
-          <View style={styles.row}>
-            <ProfileSummary userId={item.userId} />
-            <ContactPhoneReveal tripId={id} targetUserId={item.userId} />
-            <View style={styles.actions}>
-              <Button
-                label="Approve"
-                onPress={() => handleApprove(item.id)}
-                loading={actingOn === item.id}
-              />
-              <Button
-                label="Decline"
-                onPress={() => handleDecline(item.id)}
-                variant="secondary"
-                loading={actingOn === item.id}
-              />
+        contentContainerStyle={styles.listContent}
+        renderItem={({ item }) => {
+          const seats = item.seatsRequested || 1;
+          return (
+            <Card style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Badge
+                  label={`🎟️ ${seats} ${seats === 1 ? "Seat" : "Seats"} Requested`}
+                  variant="accent"
+                />
+                <Text style={styles.requestTime}>
+                  {new Date(item.joinedAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </Text>
+              </View>
+
+              <View style={styles.profileSection}>
+                <ProfileSummary userId={item.userId} />
+              </View>
+
+              <View style={styles.phoneSection}>
+                <ContactPhoneReveal tripId={id} targetUserId={item.userId} />
+              </View>
+
+              <View style={styles.actions}>
+                <Button
+                  label="✓ Approve Request"
+                  onPress={() => handleApprove(item.id)}
+                  loading={actingOn === item.id}
+                  variant="primary"
+                  style={styles.actionBtn}
+                />
+                <Button
+                  label="✕ Decline"
+                  onPress={() => handleDecline(item.id)}
+                  variant="secondary"
+                  loading={actingOn === item.id}
+                  style={styles.declineBtn}
+                />
+              </View>
+            </Card>
+          );
+        }}
+        ListEmptyComponent={
+          !loading ? (
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyIcon}>✨</Text>
+              <Text style={styles.emptyTitle}>No pending join requests</Text>
+              <Text style={styles.emptySub}>
+                When travelers request to hop on your journey, they will appear here for your review and approval.
+              </Text>
             </View>
-          </View>
-        )}
-        ListEmptyComponent={!loading ? <Text style={styles.empty}>No pending requests.</Text> : null}
+          ) : null
+        }
       />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { ...typography.display, color: colors.ink, marginBottom: spacing.lg },
-  row: {
-    backgroundColor: colors.paperRaised,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.line,
+  header: {
+    marginBottom: spacing.xl,
+  },
+  title: {
+    ...typography.display,
+    color: colors.ink,
+  },
+  subtitle: {
+    ...typography.body,
+    color: colors.inkMuted,
+    marginTop: 4,
+  },
+  listContent: {
+    paddingBottom: spacing.xxxl,
+  },
+  card: {
     padding: spacing.lg,
+    backgroundColor: colors.paper,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+    marginBottom: spacing.md,
+    ...shadows.sm,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: spacing.md,
   },
-  actions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
-  empty: { ...typography.body, color: colors.inkSoft, textAlign: "center", marginTop: spacing.xxl },
+  requestTime: {
+    ...typography.overline,
+    color: colors.inkSubtle,
+  },
+  profileSection: {
+    marginBottom: spacing.md,
+  },
+  phoneSection: {
+    marginBottom: spacing.md,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+  },
+  actions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  actionBtn: {
+    flex: 2,
+  },
+  declineBtn: {
+    flex: 1,
+  },
+  emptyWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.xxxl,
+    paddingHorizontal: spacing.xl,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: spacing.md,
+  },
+  emptyTitle: {
+    ...typography.h3,
+    color: colors.ink,
+    marginBottom: spacing.xs,
+  },
+  emptySub: {
+    ...typography.body,
+    color: colors.inkMuted,
+    textAlign: "center",
+    maxWidth: 320,
+    lineHeight: 20,
+  },
 });

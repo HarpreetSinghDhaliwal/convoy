@@ -1,38 +1,79 @@
 import React from "react";
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
-import { colors, radius, typography } from "@/theme";
+import { Image, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { colors, typography } from "@/theme";
+
+export type AvatarSize = number | "xs" | "sm" | "md" | "lg" | "xl";
 
 export interface AvatarProps {
   name?: string;
   email?: string;
-  size?: number;
+  uri?: string | null;
+  size?: AvatarSize;
   isVerified?: boolean;
   style?: StyleProp<ViewStyle>;
 }
 
-export function Avatar({ name, email, size = 44, isVerified = false, style }: AvatarProps) {
+const SIZE_MAP: Record<string, number> = {
+  xs: 24,
+  sm: 32,
+  md: 44,
+  lg: 56,
+  xl: 72,
+};
+
+export function Avatar({
+  name,
+  email,
+  uri,
+  size = 44,
+  isVerified = false,
+  style,
+}: AvatarProps) {
+  const numericSize = typeof size === "number" ? size : SIZE_MAP[size] || 44;
+
   const identifier = name || email || "User";
   const initials = identifier
     .split(" ")
     .map((part) => part[0])
+    .filter(Boolean)
     .join("")
     .slice(0, 2)
-    .toUpperCase();
+    .toUpperCase() || "U";
 
-  const fontSize = Math.round(size * 0.38);
+  const fontSize = Math.round(numericSize * 0.38);
 
   return (
-    <View style={[{ width: size, height: size }, styles.container, style]}>
-      <View
-        style={[
-          styles.circle,
-          { width: size, height: size, borderRadius: size / 2 },
-        ]}
-      >
-        <Text style={[styles.initials, { fontSize }]}>{initials}</Text>
-      </View>
+    <View style={[{ width: numericSize, height: numericSize }, styles.container, style]}>
+      {uri ? (
+        <Image
+          source={{ uri }}
+          style={[
+            styles.image,
+            { width: numericSize, height: numericSize, borderRadius: numericSize / 2 },
+          ]}
+        />
+      ) : (
+        <View
+          style={[
+            styles.circle,
+            { width: numericSize, height: numericSize, borderRadius: numericSize / 2 },
+          ]}
+        >
+          <Text style={[styles.initials, { fontSize }]}>{initials}</Text>
+        </View>
+      )}
+
       {isVerified ? (
-        <View style={[styles.badge, { width: Math.round(size * 0.36), height: Math.round(size * 0.36), borderRadius: size / 2 }]}>
+        <View
+          style={[
+            styles.badge,
+            {
+              width: Math.round(numericSize * 0.36),
+              height: Math.round(numericSize * 0.36),
+              borderRadius: numericSize / 2,
+            },
+          ]}
+        >
           <Text style={styles.checkmark}>✓</Text>
         </View>
       ) : null}
@@ -50,6 +91,10 @@ const styles = StyleSheet.create({
     borderColor: colors.trust,
     alignItems: "center",
     justifyContent: "center",
+  },
+  image: {
+    borderWidth: 1.5,
+    borderColor: colors.trust,
   },
   initials: {
     ...typography.bodyMedium,

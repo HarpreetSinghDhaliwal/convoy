@@ -91,16 +91,31 @@ export async function setEmergencyContact(
 
 export async function getPublicProfile(userId: string): Promise<PublicProfile> {
   const { data, error } = await supabase
-    .from("public_profiles")
-    .select()
+    .from("users")
+    .select("id, name, photo_url, kyc_status, created_at, bio")
     .eq("id", userId)
     .single();
-  if (error) throw error;
+  if (error) {
+    const { data: fallbackData, error: fbErr } = await supabase
+      .from("public_profiles")
+      .select()
+      .eq("id", userId)
+      .single();
+    if (fbErr) throw fbErr;
+    return {
+      id: fallbackData.id,
+      name: fallbackData.name,
+      photoUrl: fallbackData.photo_url,
+      kycStatus: fallbackData.kyc_status,
+    };
+  }
   return {
     id: data.id,
     name: data.name,
     photoUrl: data.photo_url,
     kycStatus: data.kyc_status,
+    bio: data.bio ?? null,
+    createdAt: data.created_at ?? null,
   };
 }
 

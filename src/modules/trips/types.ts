@@ -59,6 +59,7 @@ export interface TripMember {
   pickupPointId: string | null;
   status: TripMemberStatus;
   joinedAt: string;
+  seatsRequested?: number;
   // Optional, best-effort — submitted when requesting to join so the Lead
   // can later ask for a suggested meeting point (routing module, §05).
   requestedLat: number | null;
@@ -93,6 +94,7 @@ export interface TripFilters {
 
 export interface RequestToJoinOptions {
   pickupPointId?: string;
+  seatsRequested?: number;
   // Best-effort, never required (blueprint §04 consent: location is opt-in)
   // — feeds Phase 05's suggested-meeting-point clustering, nothing else.
   requestedLat?: number;

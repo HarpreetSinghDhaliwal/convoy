@@ -47,6 +47,7 @@ function rowToMember(row: Record<string, unknown>): TripMember {
     pickupPointId: (row.pickup_point_id as string) ?? null,
     status: row.status as TripMemberStatus,
     joinedAt: row.joined_at as string,
+    seatsRequested: row.seats_requested != null ? Number(row.seats_requested) : 1,
     requestedLat: row.requested_lat != null ? Number(row.requested_lat) : null,
     requestedLng: row.requested_lng != null ? Number(row.requested_lng) : null,
   };
@@ -177,19 +178,99 @@ export async function cancelTrip(tripId: string): Promise<void> {
   if (error) throw error;
 }
 
+export async function cancelTripWithReason(
+  tripId: string,
+  leadId: string,
+  category: string,
+  note: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("trips")
+    .update({ cancelled_at: new Date().toISOString() })
+    .eq("id", tripId);
+  if (error) throw error;
+
+  await supabase.from("trip_cancellations").insert({
+    trip_id: tripId,
+    user_id: leadId,
+    role: "lead",
+    reason_category: category,
+    reason_note: note,
+    status: "pending_review",
+  });
+}
+
+export async function leaveTrip(memberId: string): Promise<void> {
+  const { error } = await supabase
+    .from("trip_members")
+    .update({ status: "left" satisfies TripMemberStatus })
+    .eq("id", memberId);
+  if (error) throw error;
+}
+
+export async function leaveTripWithReason(
+  memberId: string,
+  userId: string,
+  tripId: string,
+  category: string,
+  note: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("trip_members")
+    .update({ status: "left" satisfies TripMemberStatus })
+    .eq("id", memberId);
+  if (error) throw error;
+
+  await supabase.from("trip_cancellations").insert({
+    trip_id: tripId,
+    user_id: userId,
+    role: "passenger",
+    reason_category: category,
+    reason_note: note,
+    status: "pending_review",
+  });
+}
+
 export async function requestToJoin(
   tripId: string,
   userId: string,
   options: RequestToJoinOptions = {},
 ): Promise<void> {
-  const { error } = await supabase.from("trip_members").insert({
+  const payload: Record<string, any> = {
     trip_id: tripId,
     user_id: userId,
     pickup_point_id: options.pickupPointId ?? null,
     requested_lat: options.requestedLat ?? null,
     requested_lng: options.requestedLng ?? null,
-  });
+  };
+  if (options.seatsRequested) {
+    payload.seats_requested = options.seatsRequested;
+  }
+
+  let { error } = await supabase.from("trip_members").insert(payload);
+  if (error && error.message?.includes("seats_requested")) {
+    delete payload.seats_requested;
+    const retry = await supabase.from("trip_members").insert(payload);
+    error = retry.error;
+  }
   if (error) throw error;
+}
+
+export function subscribeToMyMemberships(userId: string, onUpdate: () => void): () => void {
+  const channel = supabase
+    .channel(`user-memberships-${userId}`)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "trip_members", filter: `user_id=eq.${userId}` },
+      () => {
+        onUpdate();
+      },
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 // Phase 05: rough locations submitted by requesters, for the Lead's
@@ -216,14 +297,6 @@ export async function withdrawRequest(memberId: string): Promise<void> {
   const { error } = await supabase
     .from("trip_members")
     .update({ status: "withdrawn" satisfies TripMemberStatus })
-    .eq("id", memberId);
-  if (error) throw error;
-}
-
-export async function leaveTrip(memberId: string): Promise<void> {
-  const { error } = await supabase
-    .from("trip_members")
-    .update({ status: "left" satisfies TripMemberStatus })
     .eq("id", memberId);
   if (error) throw error;
 }

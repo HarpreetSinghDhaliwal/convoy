@@ -2,6 +2,7 @@ import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { usePathname, router } from "expo-router";
 import { colors, radius, shadows, spacing, typography } from "@/theme";
+import { useUnreadCount } from "@/modules/chat";
 
 export interface NavItem {
   key: string;
@@ -15,19 +16,25 @@ const NAV_ITEMS: NavItem[] = [
   { key: "explore", label: "Explore", icon: "🧭", route: "/" },
   { key: "saved", label: "Saved", icon: "📍", route: "/favorites" },
   { key: "plan", label: "Plan", icon: "➕", route: "/trips/create", isAction: true },
-  { key: "following", label: "Following", icon: "👥", route: "/following" },
+  { key: "chats", label: "Chats", icon: "💬", route: "/messages" },
   { key: "account", label: "Account", icon: "👤", route: "/account" },
 ];
 
 export function NavBar() {
   const pathname = usePathname();
+  const { unreadCount } = useUnreadCount();
 
   function isActive(route: string) {
     if (route === "/") {
       return pathname === "/" || pathname === "/(app)" || pathname === "/(app)/";
     }
     const cleanPath = pathname.replace("/(app)", "");
-    return cleanPath === route || cleanPath.startsWith(`${route}/`) || pathname === route || pathname.startsWith(`${route}/`);
+    return (
+      cleanPath === route ||
+      cleanPath.startsWith(`${route}/`) ||
+      pathname === route ||
+      pathname.startsWith(`${route}/`)
+    );
   }
 
   function handleNavigate(route: string) {
@@ -66,9 +73,18 @@ export function NavBar() {
                 pressed && styles.navTabPressed,
               ]}
             >
-              <Text style={[styles.navIcon, active && styles.navIconActive]}>
-                {item.icon}
-              </Text>
+              <View style={styles.iconWrap}>
+                <Text style={[styles.navIcon, active && styles.navIconActive]}>
+                  {item.icon}
+                </Text>
+                {item.key === "chats" && unreadCount > 0 && (
+                  <View style={styles.badgeWrap}>
+                    <Text style={styles.badgeText}>
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
               <Text style={[styles.navLabel, active && styles.navLabelActive]}>
                 {item.label}
               </Text>
@@ -123,6 +139,11 @@ const styles = StyleSheet.create({
   navTabPressed: {
     transform: [{ scale: 0.94 }],
   },
+  iconWrap: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   navIcon: {
     fontSize: 20,
     marginBottom: 2,
@@ -131,6 +152,26 @@ const styles = StyleSheet.create({
   navIconActive: {
     opacity: 1,
     transform: [{ scale: 1.08 }],
+  },
+  badgeWrap: {
+    position: "absolute",
+    top: -4,
+    right: -8,
+    backgroundColor: colors.accent,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: colors.paper,
+  },
+  badgeText: {
+    color: colors.inkLight,
+    fontSize: 9,
+    fontWeight: "800",
+    lineHeight: 11,
   },
   navLabel: {
     ...typography.caption,

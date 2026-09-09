@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import * as Location from "expo-location";
 import { router, useLocalSearchParams } from "expo-router";
-import { Screen, Button, Card, Badge, Avatar } from "@/components";
+import { Screen, Button, Card, Badge, Avatar, Stepper } from "@/components";
 import { colors, radius, shadows, spacing, typography } from "@/theme";
 import { useAuthSession } from "@/modules/auth";
 import { useKycStatus } from "@/modules/kyc";
@@ -14,7 +14,14 @@ import { OverlappingTripsList } from "@/modules/routing";
 import { useTripDetail } from "../hooks/useTripDetail";
 import { useMyMemberships } from "../hooks/useMyMemberships";
 import { useCheckpoints } from "../hooks/useCheckpoints";
-import { cancelTrip, requestToJoin } from "../services/tripService";
+import {
+  cancelTripWithReason,
+  leaveTripWithReason,
+  requestToJoin,
+  withdrawRequest,
+} from "../services/tripService";
+import { TripCancellationModal } from "../components/TripCancellationModal";
+import { ProfileSummary } from "@/modules/profile";
 
 export function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -22,12 +29,14 @@ export function TripDetailScreen() {
   const { isVerified } = useKycStatus();
   const { hasPending: hasPendingRatings } = usePendingRatings();
   const { trip, seatsLeft, loading, error, refresh } = useTripDetail(id);
-  const { memberships } = useMyMemberships();
+  const { memberships, refresh: refreshMemberships } = useMyMemberships();
   const { checkpoints } = useCheckpoints(trip?.id);
+  const [seatsRequested, setSeatsRequested] = useState(1);
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<string | undefined>();
   const [requested, setRequested] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [selectedPickupId, setSelectedPickupId] = useState<string | null>(null);
 
   const isLead = useMemo(
@@ -35,8 +44,16 @@ export function TripDetailScreen() {
     [trip, session],
   );
 
-  const hasChatAccess =
-    isLead || memberships.some((m) => m.tripId === trip?.id && m.status === "approved");
+  const myMembership = useMemo(
+    () => memberships.find((m) => m.tripId === trip?.id),
+    [memberships, trip?.id],
+  );
+
+  const isApproved = myMembership?.status === "approved";
+  const isPending = myMembership?.status === "requested" || requested;
+  const isDeclined = myMembership?.status === "declined";
+
+  const hasChatAccess = isLead || isApproved;
 
   async function handleRequestToJoin() {
     if (!trip || !session?.user.id) return;
@@ -62,10 +79,13 @@ export function TripDetailScreen() {
 
       await requestToJoin(trip.id, session.user.id, {
         pickupPointId: selectedPickupId ?? undefined,
+        seatsRequested,
         requestedLat,
         requestedLng,
       });
       setRequested(true);
+      refreshMemberships();
+      refresh();
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : "Couldn't send the request — try again");
     } finally {
@@ -73,9 +93,27 @@ export function TripDetailScreen() {
     }
   }
 
-  async function handleCancel() {
-    if (!trip) return;
-    await cancelTrip(trip.id);
+  async function handleWithdraw() {
+    if (!myMembership?.id) return;
+    try {
+      await withdrawRequest(myMembership.id);
+      setRequested(false);
+      refreshMemberships();
+      refresh();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleConfirmCancellation(category: string, note: string) {
+    if (!trip || !session?.user.id) return;
+    if (isLead) {
+      await cancelTripWithReason(trip.id, session.user.id, category, note);
+    } else if (myMembership?.id) {
+      await leaveTripWithReason(myMembership.id, session.user.id, trip.id, category, note);
+    }
+    setRequested(false);
+    refreshMemberships();
     refresh();
   }
 
@@ -149,6 +187,12 @@ export function TripDetailScreen() {
             </View>
             <Text style={styles.fuelShareText}>Shared fuel & toll split</Text>
           </View>
+        </Card>
+
+        {/* Host Profile Card */}
+        <Card style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>👑 Trip Host & Driver</Text>
+          <ProfileSummary userId={trip.leadId} />
         </Card>
 
         {/* Route Details Card */}
@@ -245,9 +289,15 @@ export function TripDetailScreen() {
 
         {/* Action Controls & Chat Access */}
         <Card style={styles.actionCard}>
-          {hasChatAccess && (
-            <View style={styles.chatSection}>
-              {!isLead && <ContactPhoneReveal tripId={trip.id} targetUserId={trip.leadId} />}
+          {isLead ? (
+            <View style={styles.leadControls}>
+              <View style={styles.leadHeaderBanner}>
+                <Text style={styles.leadBadgeEmoji}>👑</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.leadBadgeTitle}>You are the Trip Host</Text>
+                  <Text style={styles.leadBadgeSub}>Review member requests, coordinate pickup points, and manage your journey.</Text>
+                </View>
+              </View>
               <Button
                 label="💬 Open Group Chat"
                 onPress={() => router.push({ pathname: "/trips/[id]/chat", params: { id: trip.id } })}
@@ -255,11 +305,6 @@ export function TripDetailScreen() {
                 size="lg"
                 style={styles.actionBtn}
               />
-            </View>
-          )}
-
-          {isLead ? (
-            <View style={styles.leadControls}>
               <PickupPointManager tripId={trip.id} />
               <Button
                 label="👥 Manage Join Requests"
@@ -271,26 +316,99 @@ export function TripDetailScreen() {
               {!trip.cancelledAt && (
                 <Button
                   label="Cancel Trip"
-                  onPress={handleCancel}
+                  onPress={() => setCancelModalOpen(true)}
                   variant="danger"
                   size="md"
                   style={styles.actionBtn}
                 />
               )}
             </View>
-          ) : requested ? (
+          ) : isApproved ? (
+            <View style={styles.confirmedBox}>
+              <View style={styles.confirmedHeaderRow}>
+                <Text style={styles.confirmedEmoji}>🎉</Text>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.confirmedBadgeWrap}>
+                    <Badge label="Confirmed Traveler" variant="verified" />
+                  </View>
+                  <Text style={styles.confirmedTitle}>You&rsquo;re Confirmed on this Journey!</Text>
+                  <Text style={styles.confirmedSubtitle}>
+                    Host approved your booking of {myMembership?.seatsRequested || 1} {((myMembership?.seatsRequested || 1) === 1) ? "seat" : "seats"} (₹{((myMembership?.seatsRequested || 1) * trip.pricePerSeat)} total fuel split).
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.confirmedActions}>
+                <Button
+                  label="💬 Open Trip Group Chat"
+                  onPress={() => router.push({ pathname: "/trips/[id]/chat", params: { id: trip.id } })}
+                  variant="primary"
+                  size="lg"
+                  style={styles.actionBtn}
+                />
+                <ContactPhoneReveal tripId={trip.id} targetUserId={trip.leadId} />
+                <Button
+                  label="Cancel & Leave Trip"
+                  onPress={() => setCancelModalOpen(true)}
+                  variant="danger"
+                  size="sm"
+                  style={{ marginTop: spacing.md }}
+                />
+              </View>
+            </View>
+          ) : isPending ? (
             <View style={styles.pendingBox}>
-              <Text style={styles.pendingIcon}>⏳</Text>
-              <Text style={styles.pendingTitle}>Request Sent</Text>
-              <Text style={styles.pendingDesc}>Waiting for the trip host to review and approve your join request.</Text>
+              <View style={styles.pendingHeaderRow}>
+                <Text style={styles.pendingIcon}>⏳</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pendingTitle}>Join Request Sent (Pending Approval)</Text>
+                  <Text style={styles.pendingDesc}>
+                    You requested {myMembership?.seatsRequested || seatsRequested} {((myMembership?.seatsRequested || seatsRequested) === 1) ? "seat" : "seats"} (₹{((myMembership?.seatsRequested || seatsRequested) * trip.pricePerSeat)} total). The host has been notified and will review your request.
+                  </Text>
+                </View>
+              </View>
+              <Button
+                label="Withdraw Join Request"
+                onPress={handleWithdraw}
+                variant="secondary"
+                size="md"
+                style={{ marginTop: spacing.md }}
+              />
+            </View>
+          ) : isDeclined ? (
+            <View style={styles.declinedBox}>
+              <Text style={styles.declinedIcon}>ℹ️</Text>
+              <Text style={styles.declinedTitle}>Request Not Accepted</Text>
+              <Text style={styles.declinedDesc}>The host was unable to accept this request. Explore other trips going to {trip.destination}.</Text>
             </View>
           ) : (
             <View style={styles.joinControls}>
+              {/* Multi-seat selection stepper */}
+              <View style={styles.seatPickerCard}>
+                <View style={styles.seatPickerHeader}>
+                  <Text style={styles.seatPickerTitle}>💺 Number of Seats</Text>
+                  <Text style={styles.seatPickerSub}>Select how many passengers are travelling with you</Text>
+                </View>
+                <View style={styles.seatStepperRow}>
+                  <Stepper
+                    value={seatsRequested}
+                    min={1}
+                    max={Math.max(1, seatsLeft)}
+                    onChange={setSeatsRequested}
+                  />
+                  <View style={styles.seatCostBreakdown}>
+                    <Text style={styles.seatCostTotal}>₹{seatsRequested * trip.pricePerSeat}</Text>
+                    <Text style={styles.seatCostNote}>({seatsRequested} {seatsRequested === 1 ? "seat" : "seats"} × ₹{trip.pricePerSeat})</Text>
+                  </View>
+                </View>
+              </View>
+
               <PickupPointSelector
                 tripId={trip.id}
                 selectedId={selectedPickupId}
                 onSelect={setSelectedPickupId}
               />
+
               {!isVerified && (
                 <View style={styles.nudgeBox}>
                   <Text style={styles.nudgeIcon}>💡</Text>
@@ -299,8 +417,13 @@ export function TripDetailScreen() {
                   </Text>
                 </View>
               )}
+
               <Button
-                label={seatsLeft > 0 ? "Request to Join Trip" : "Trip Full (0 Seats Left)"}
+                label={
+                  seatsLeft > 0
+                    ? `Request to Join (${seatsRequested} ${seatsRequested === 1 ? "Seat" : "Seats"} · ₹${seatsRequested * trip.pricePerSeat})`
+                    : "Trip Full (0 Seats Left)"
+                }
                 onPress={handleRequestToJoin}
                 loading={requesting}
                 disabled={seatsLeft <= 0}
@@ -315,7 +438,7 @@ export function TripDetailScreen() {
             <View style={styles.reportWrap}>
               <Button
                 label="🚩 Report this trip"
-                onPress={() => setReportOpen(false || true)}
+                onPress={() => setReportOpen(true)}
                 variant="ghost"
                 size="sm"
               />
@@ -329,6 +452,13 @@ export function TripDetailScreen() {
         onClose={() => setReportOpen(false)}
         reportedId={trip.leadId}
         tripId={trip.id}
+      />
+
+      <TripCancellationModal
+        visible={cancelModalOpen}
+        onClose={() => setCancelModalOpen(false)}
+        onConfirm={handleConfirmCancellation}
+        isLead={isLead}
       />
     </Screen>
   );
@@ -555,6 +685,31 @@ const styles = StyleSheet.create({
   leadControls: {
     gap: spacing.md,
   },
+  leadHeaderBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    marginBottom: spacing.xs,
+  },
+  leadBadgeEmoji: {
+    fontSize: 28,
+  },
+  leadBadgeTitle: {
+    ...typography.captionBold,
+    color: colors.ink,
+    fontSize: 15,
+  },
+  leadBadgeSub: {
+    ...typography.caption,
+    color: colors.inkSubtle,
+    marginTop: 2,
+    lineHeight: 16,
+  },
   joinControls: {
     gap: spacing.md,
   },
@@ -564,17 +719,58 @@ const styles = StyleSheet.create({
   joinBtn: {
     ...shadows.glow,
   },
+  confirmedBox: {
+    padding: spacing.lg,
+    backgroundColor: colors.statusVerifiedLight,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderColor: "rgba(21, 128, 61, 0.3)",
+    ...shadows.sm,
+  },
+  confirmedHeaderRow: {
+    flexDirection: "row",
+    gap: spacing.md,
+    alignItems: "flex-start",
+    marginBottom: spacing.md,
+  },
+  confirmedEmoji: {
+    fontSize: 32,
+    lineHeight: 36,
+  },
+  confirmedBadgeWrap: {
+    alignSelf: "flex-start",
+    marginBottom: spacing.xs,
+  },
+  confirmedTitle: {
+    ...typography.h3,
+    color: colors.statusVerified,
+    marginBottom: 4,
+  },
+  confirmedSubtitle: {
+    ...typography.caption,
+    color: colors.inkMuted,
+    lineHeight: 18,
+  },
+  confirmedActions: {
+    gap: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(21, 128, 61, 0.15)",
+    paddingTop: spacing.md,
+  },
   pendingBox: {
-    alignItems: "center",
     padding: spacing.lg,
     backgroundColor: colors.statusPendingLight,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: "rgba(217, 119, 6, 0.25)",
   },
+  pendingHeaderRow: {
+    flexDirection: "row",
+    gap: spacing.md,
+    alignItems: "flex-start",
+  },
   pendingIcon: {
     fontSize: 28,
-    marginBottom: spacing.xs,
   },
   pendingTitle: {
     ...typography.h3,
@@ -584,7 +780,67 @@ const styles = StyleSheet.create({
   pendingDesc: {
     ...typography.caption,
     color: colors.inkMuted,
+    lineHeight: 18,
+  },
+  declinedBox: {
+    alignItems: "center",
+    padding: spacing.lg,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  declinedIcon: {
+    fontSize: 28,
+    marginBottom: spacing.xs,
+  },
+  declinedTitle: {
+    ...typography.h3,
+    color: colors.inkMuted,
+    marginBottom: 4,
+  },
+  declinedDesc: {
+    ...typography.caption,
+    color: colors.inkSubtle,
     textAlign: "center",
+  },
+  seatPickerCard: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  seatPickerHeader: {
+    marginBottom: spacing.sm,
+  },
+  seatPickerTitle: {
+    ...typography.captionBold,
+    color: colors.ink,
+    fontSize: 14,
+  },
+  seatPickerSub: {
+    ...typography.caption,
+    color: colors.inkSubtle,
+    marginTop: 2,
+  },
+  seatStepperRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: spacing.xs,
+  },
+  seatCostBreakdown: {
+    alignItems: "flex-end",
+  },
+  seatCostTotal: {
+    ...typography.h2,
+    color: colors.accent,
+  },
+  seatCostNote: {
+    ...typography.overline,
+    color: colors.inkSubtle,
+    marginTop: 2,
   },
   nudgeBox: {
     flexDirection: "row",
