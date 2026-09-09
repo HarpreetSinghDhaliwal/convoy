@@ -18,16 +18,14 @@ create policy "trip members read undeleted messages"
       or recipient_id = auth.uid()
       -- Trip lead can view trip communications
       or exists (select 1 from public.trips t where t.id = trip_id and t.lead_id = auth.uid())
-      -- Group messages only when trip planner explicitly enabled group chat
+      -- Group/broadcast messages readable by all approved members
       or (
         recipient_id is null
         and exists (
-          select 1 from public.trips t
-          join public.trip_members tm on tm.trip_id = t.id
-          where t.id = messages.trip_id
+          select 1 from public.trip_members tm
+          where tm.trip_id = messages.trip_id
             and tm.user_id = auth.uid()
             and tm.status = 'approved'
-            and t.group_chat_enabled = true
         )
       )
     )
