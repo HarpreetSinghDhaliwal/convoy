@@ -150,8 +150,12 @@ export async function listCheckpoints(tripId: string): Promise<TripCheckpoint[]>
 export async function listTrips(filters: TripFilters = {}): Promise<Trip[]> {
   let query = supabase.from("trips").select().eq("published", true).is("cancelled_at", null);
 
-  if (filters.destination) {
-    query = query.ilike("destination", `%${filters.destination}%`);
+  if (filters.destination && filters.destination.trim()) {
+    const term = filters.destination.trim();
+    // Intelligent multi-field search: matches destination, pickup origin, or route notes
+    query = query.or(
+      `destination.ilike.%${term}%,origin_label.ilike.%${term}%,short_note.ilike.%${term}%`,
+    );
   }
   if (filters.womenOnlyOnly) {
     query = query.eq("women_only", true);
