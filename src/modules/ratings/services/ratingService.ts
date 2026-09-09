@@ -45,7 +45,7 @@ export async function submitRating(
 /**
  * Bilateral / Exchanged Rating Enforcement:
  * Returns publicly visible reviews (only when both parties have rated each other or 14-day window passed).
- * If viewer is the rater, includes their own submitted rating marked with isExchanged=false.
+ * If viewer is the ratee (profile owner) or rater, includes the rating marked with appropriate exchange status.
  */
 export async function getRatingsForUser(userId: string, viewerId?: string): Promise<Rating[]> {
   // 1. Fetch all ratings where ratee_id = userId
@@ -87,15 +87,16 @@ export async function getRatingsForUser(userId: string, viewerId?: string): Prom
   const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
 
   const result: Rating[] = [];
+  const isOwner = Boolean(viewerId && viewerId === userId);
 
   for (const r of allReceived) {
     const isMutual = reverseSet.has(`${r.trip_id}:${r.rater_id}`);
     const isExpired = new Date(r.created_at).getTime() < fourteenDaysAgo;
     const isExchanged = isMutual || isExpired;
-    const isViewerAuthor = viewerId && r.rater_id === viewerId;
+    const isViewerAuthor = Boolean(viewerId && r.rater_id === viewerId);
 
-    // Only show if exchanged (public) OR if the current viewer wrote it
-    if (isExchanged || isViewerAuthor) {
+    // Show if exchanged (public) OR if viewer is author OR if viewer is the profile owner
+    if (isExchanged || isViewerAuthor || isOwner) {
       const raterInfo = raterMap.get(r.rater_id);
       result.push(
         rowToRating(
@@ -113,10 +114,50 @@ export async function getRatingsForUser(userId: string, viewerId?: string): Prom
   return result;
 }
 
-export function getAggregate(ratings: Rating[]): { average: number; count: number } {
-  // Aggregate only counts exchanged ratings for fair public scoring
+export async function getRatingsGivenByUser(userId: string): Promise<Rating[]> {
+  const { data, error } = await supabase
+    .from("ratings")
+    .select()
+    .eq("rater_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  if (!data || data.length === 0) return [];
+
+  const rateeIds = Array.from(new Set(data.map((r) => r.ratee_id)));
+  const { data: ratees } = await supabase
+    .from("users")
+    .select("id, name, photo_url")
+    .in("id", rateeIds);
+
+  const rateeMap = new Map<string, { name: string; photo_url?: string }>();
+  (ratees ?? []).forEach((u) => {
+    rateeMap.set(u.id, { name: u.name, photo_url: u.photo_url });
+  });
+
+  return data.map((r) => {
+    const rateeInfo = rateeMap.get(r.ratee_id);
+    return rowToRating(
+      {
+        ...r,
+        rater_name: rateeInfo?.name,
+        rater_photo_url: rateeInfo?.photo_url,
+      },
+      true,
+    );
+  });
+}
+
+export function getAggregate(ratings: Rating[]): { average: number; count: number; totalCount: number } {
   const exchangedOnly = ratings.filter((r) => r.isExchanged !== false);
-  if (exchangedOnly.length === 0) return { average: 0, count: 0 };
-  const sum = exchangedOnly.reduce((acc, r) => acc + r.score, 0);
-  return { average: sum / exchangedOnly.length, count: exchangedOnly.length };
+  const totalCount = ratings.length;
+  if (ratings.length === 0) return { average: 0, count: 0, totalCount: 0 };
+
+  const target = exchangedOnly.length > 0 ? exchangedOnly : ratings;
+  const sum = target.reduce((acc, r) => acc + r.score, 0);
+  return {
+    average: sum / target.length,
+    count: exchangedOnly.length,
+    totalCount,
+  };
 }

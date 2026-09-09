@@ -90,7 +90,11 @@ export function PublicProfileScreen() {
 
   return (
     <Screen showBack title="Roadtripper Profile">
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Profile Hero Card */}
         <Card style={styles.heroCard}>
           <View style={styles.heroHeader}>
@@ -122,8 +126,12 @@ export function PublicProfileScreen() {
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statBox}>
-              <Text style={styles.statNumber}>{aggregate.count > 0 ? `★ ${aggregate.average.toFixed(1)}` : "★ New"}</Text>
-              <Text style={styles.statLabel}>{aggregate.count} Reviews</Text>
+              <Text style={styles.statNumber}>
+                {aggregate.totalCount > 0 ? `★ ${aggregate.average.toFixed(1)}` : "★ New"}
+              </Text>
+              <Text style={styles.statLabel}>
+                {aggregate.totalCount > 0 ? `${aggregate.totalCount} Review${aggregate.totalCount === 1 ? "" : "s"}` : "0 Reviews"}
+              </Text>
             </View>
           </View>
 
@@ -163,13 +171,19 @@ export function PublicProfileScreen() {
         {/* Exchanged Reviews & Ratings */}
         <Card style={styles.sectionCard}>
           <View style={styles.sectionHeaderRow}>
-            <View>
-              <Text style={styles.sectionTitle}>⭐ Exchanged Ratings & Reviews</Text>
-              <Text style={styles.sectionSub}>Double-blind verified ratings from co-travelers</Text>
+            <View style={{ flex: 1, marginRight: spacing.sm }}>
+              <Text style={styles.sectionTitle}>
+                ⭐ {isOwnProfile ? "Your Ratings & Reviews" : "Exchanged Ratings & Reviews"}
+              </Text>
+              <Text style={styles.sectionSub}>
+                {isOwnProfile
+                  ? "Reviews received from co-travelers across completed roadtrips"
+                  : "Double-blind verified ratings from co-travelers"}
+              </Text>
             </View>
-            {aggregate.count > 0 && (
+            {aggregate.totalCount > 0 && (
               <View style={styles.ratingScoreTag}>
-                <Text style={styles.ratingScoreText}>★ {aggregate.average.toFixed(1)}</Text>
+                <Text style={styles.ratingScoreText}>★ {aggregate.average.toFixed(1)} ({aggregate.totalCount})</Text>
               </View>
             )}
           </View>
@@ -177,9 +191,11 @@ export function PublicProfileScreen() {
           {ratings.length === 0 ? (
             <View style={styles.emptyReviewsBox}>
               <Text style={styles.emptyReviewsEmoji}>🌟</Text>
-              <Text style={styles.emptyReviewsTitle}>No exchanged reviews yet</Text>
+              <Text style={styles.emptyReviewsTitle}>No reviews yet</Text>
               <Text style={styles.emptyReviewsSub}>
-                Reviews are revealed publicly once both travelers rate each other after a completed journey.
+                {isOwnProfile
+                  ? "When co-travelers submit feedback on your journeys, it will appear here."
+                  : "Reviews are revealed publicly once both travelers rate each other after a completed journey."}
               </Text>
             </View>
           ) : (
@@ -250,6 +266,10 @@ export function PublicProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  scrollView: {
+    flex: 1,
+    width: "100%",
+  },
   scrollContent: {
     paddingBottom: spacing.xxxl * 2,
     gap: spacing.md,
