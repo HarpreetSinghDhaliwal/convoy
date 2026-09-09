@@ -1,28 +1,45 @@
 import type { GeoPoint, RouteResult } from "../types";
 
-// OSRM's public demo server — free, no key, same "prototyping/light use,
-// not scaled production" caveat as Nominatim above. Unlike Overpass, there
-// isn't a well-known set of public mirrors to fall back across, so this is
-// a single attempt with a clear error rather than a mirror list — self-
-// hosting is the honest answer once this needs to be reliable at scale.
-const OSRM_BASE = "https://router.project-osrm.org";
+// Primary and fallback OSRM driving servers (OpenStreetMap road network)
+const OSRM_SERVERS = [
+  "https://router.project-osrm.org",
+  "https://routing.openstreetmap.de/routed-car",
+];
 
-export async function getRoute(origin: GeoPoint, destination: GeoPoint): Promise<RouteResult> {
-  const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
-  const url = `${OSRM_BASE}/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+export async function getRoute(
+  origin: GeoPoint,
+  destination: GeoPoint,
+  checkpoints: GeoPoint[] = [],
+): Promise<RouteResult> {
+  const points: GeoPoint[] = [
+    origin,
+    ...checkpoints.filter((c) => c && c.lat != null && c.lng != null),
+    destination,
+  ];
 
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`OSRM routing failed: ${res.status}`);
+  const coordsString = points.map((p) => `${p.lng},${p.lat}`).join(";");
 
-  const data = await res.json();
-  if (data.code !== "Ok" || !data.routes?.length) {
-    throw new Error(`OSRM couldn't find a route: ${data.code ?? "unknown error"}`);
+  let lastError: Error | null = null;
+
+  for (const server of OSRM_SERVERS) {
+    try {
+      const url = `${server}/route/v1/driving/${coordsString}?overview=full&geometries=geojson&steps=false`;
+      const res = await fetch(url);
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      if (data.code === "Ok" && data.routes?.length > 0) {
+        const route = data.routes[0];
+        return {
+          distanceKm: route.distance / 1000,
+          durationMin: route.duration / 60,
+          geometry: route.geometry,
+        };
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
   }
 
-  const route = data.routes[0];
-  return {
-    distanceKm: route.distance / 1000,
-    durationMin: route.duration / 60,
-    geometry: route.geometry,
-  };
+  throw lastError || new Error("Could not calculate driving route across roads");
 }

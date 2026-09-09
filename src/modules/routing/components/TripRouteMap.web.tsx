@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import L from "leaflet";
 import { colors, radius, shadows, spacing, typography } from "@/theme";
+import { getRoute } from "../services/osrmService";
 import type { GeocodeResult } from "../types";
 
 const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -45,10 +46,19 @@ export function TripRouteMap({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
 
+  // Auto-fetched geometry when routeGeometry prop isn't passed directly
+  const [internalGeometry, setInternalGeometry] = useState<{
+    type: string;
+    coordinates: [number, number][];
+  } | null>(null);
+  const [internalDistance, setInternalDistance] = useState<number | null>(null);
+  const [internalDuration, setInternalDuration] = useState<number | null>(null);
+
   // Markers and route layer refs
   const originMarkerRef = useRef<L.Marker | null>(null);
   const destMarkerRef = useRef<L.Marker | null>(null);
   const checkpointMarkersRef = useRef<L.Marker[]>([]);
+  const casingPolylineRef = useRef<L.Polyline | null>(null);
   const routePolylineRef = useRef<L.Polyline | null>(null);
 
   const activeModeRef = useRef(activePinMode);
@@ -78,6 +88,44 @@ export function TripRouteMap({
       }
     }
   }, []);
+
+  // Fetch exact road geometry if not provided
+  useEffect(() => {
+    if (routeGeometry) {
+      setInternalGeometry(null);
+      return;
+    }
+
+    if (!origin || !destination || origin.lat == null || destination.lat == null) {
+      setInternalGeometry(null);
+      setInternalDistance(null);
+      setInternalDuration(null);
+      return;
+    }
+
+    let isMounted = true;
+    async function fetchRoads() {
+      try {
+        const result = await getRoute(
+          { lat: origin!.lat, lng: origin!.lng },
+          { lat: destination!.lat, lng: destination!.lng },
+          checkpoints.map((c) => ({ lat: c.lat, lng: c.lng })),
+        );
+        if (isMounted && result) {
+          setInternalGeometry(result.geometry);
+          setInternalDistance(result.distanceKm);
+          setInternalDuration(result.durationMin);
+        }
+      } catch (err) {
+        console.warn("TripRouteMap: failed to fetch road geometry:", err);
+      }
+    }
+    fetchRoads();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [origin?.lat, origin?.lng, destination?.lat, destination?.lng, checkpoints.length, routeGeometry]);
 
   // Initialize single Leaflet Map
   useEffect(() => {
@@ -134,7 +182,7 @@ export function TripRouteMap({
     };
   }, [interactive]);
 
-  // Synchronize Markers, Route Polyline & Fit Bounds
+  // Synchronize Markers, Road Polyline & Fit Bounds
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -159,7 +207,7 @@ export function TripRouteMap({
         originMarkerRef.current.setLatLng(latLng);
       }
       if (origin.label) {
-        originMarkerRef.current.bindTooltip(`<b>Start:</b> ${origin.label.split(",")[0]}`, {
+        originMarkerRef.current.bindTooltip(`<b>Pickup:</b> ${origin.label.split(",")[0]}`, {
           direction: "top",
           offset: [0, -14],
         });
@@ -226,28 +274,42 @@ export function TripRouteMap({
       }
     });
 
-    // 4. Highlighted Driving Route Polyline
+    // 4. Highlighted Driving Road Polyline
+    if (casingPolylineRef.current) {
+      casingPolylineRef.current.remove();
+      casingPolylineRef.current = null;
+    }
     if (routePolylineRef.current) {
       routePolylineRef.current.remove();
       routePolylineRef.current = null;
     }
 
-    if (routeGeometry?.coordinates && routeGeometry.coordinates.length > 0) {
+    const activeGeometry = routeGeometry || internalGeometry;
+
+    if (activeGeometry?.coordinates && activeGeometry.coordinates.length > 0) {
       // GeoJSON is [lng, lat] -> Leaflet requires [lat, lng]
-      const latLngs: [number, number][] = routeGeometry.coordinates.map(([lng, lat]) => [lat, lng]);
+      const latLngs: [number, number][] = activeGeometry.coordinates.map(([lng, lat]) => [lat, lng]);
       latLngs.forEach((pt) => boundsPoints.push(pt));
 
-      const polyline = L.polyline(latLngs, {
-        color: colors.accent,
-        weight: 5,
-        opacity: 0.85,
+      // Dual-layer Highway road style (casing + core)
+      const casing = L.polyline(latLngs, {
+        color: "#1E5F74",
+        weight: 7,
+        opacity: 0.6,
         lineCap: "round",
         lineJoin: "round",
       }).addTo(map);
+      casingPolylineRef.current = casing;
 
+      const polyline = L.polyline(latLngs, {
+        color: "#C8452D",
+        weight: 4.5,
+        opacity: 0.95,
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(map);
       routePolylineRef.current = polyline;
     } else if (origin && destination) {
-      // Simple direct straight-line track if OSRM hasn't returned yet
       const simpleLatLngs: [number, number][] = [
         [origin.lat, origin.lng],
         ...checkpoints.map((c): [number, number] => [c.lat, c.lng]),
@@ -255,7 +317,7 @@ export function TripRouteMap({
       ];
       const polyline = L.polyline(simpleLatLngs, {
         color: colors.accent,
-        weight: 3.5,
+        weight: 3,
         dashArray: "6, 8",
         opacity: 0.7,
       }).addTo(map);
@@ -274,7 +336,10 @@ export function TripRouteMap({
     } else if (boundsPoints.length === 1) {
       map.setView(boundsPoints[0], 13, { animate: true });
     }
-  }, [origin, destination, checkpoints, routeGeometry]);
+  }, [origin, destination, checkpoints, routeGeometry, internalGeometry]);
+
+  const displayDistance = distanceKm || internalDistance;
+  const displayDuration = durationMin || internalDuration;
 
   return (
     <View style={[styles.wrapper, { height }]}>
@@ -312,13 +377,13 @@ export function TripRouteMap({
       )}
 
       {/* Floating Route Distance & Driving Duration Badge */}
-      {(distanceKm || durationMin) && (
+      {(displayDistance || displayDuration) && (
         <View style={styles.routeStatsBadge}>
           <Text style={styles.routeStatsEmoji}>🛣️</Text>
           <Text style={styles.routeStatsText}>
-            {distanceKm ? `~${Math.round(distanceKm)} km` : ""}
-            {distanceKm && durationMin ? " · " : ""}
-            {durationMin ? `${(durationMin / 60).toFixed(1)} hr drive` : ""}
+            {displayDistance ? `~${Math.round(displayDistance)} km` : ""}
+            {displayDistance && displayDuration ? " · " : ""}
+            {displayDuration ? `${(displayDuration / 60).toFixed(1)} hr drive` : ""}
           </Text>
         </View>
       )}
