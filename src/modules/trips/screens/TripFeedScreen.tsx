@@ -6,7 +6,7 @@ import { colors, radius, shadows, spacing, typography } from "@/theme";
 import { TripFeedAdSlot } from "@/modules/ads";
 import { useAuthSession } from "@/modules/auth";
 import { useUserProfile } from "@/modules/profile";
-import { MapPicker } from "@/modules/routing";
+import { MapPicker, useGeocodeSearch } from "@/modules/routing";
 import type { GeocodeResult } from "@/modules/routing/types";
 import { useTrips } from "../hooks/useTrips";
 import type { Trip, TripFilters } from "../types";
@@ -142,6 +142,11 @@ export function TripFeedScreen() {
   const [mapPickerTarget, setMapPickerTarget] = useState<"origin" | "dest" | null>(null);
   const [tempPickedPoint, setTempPickedPoint] = useState<GeocodeResult | null>(null);
 
+  // Map geocoding search hooks for live map suggestions while typing
+  const originGeocode = useGeocodeSearch();
+  const destGeocode = useGeocodeSearch();
+  const [focusedInput, setFocusedInput] = useState<"origin" | "dest" | null>(null);
+
   // Filter criteria
   const [seatsNeeded, setSeatsNeeded] = useState<SeatsFilterType>(0);
   const [dateFilter, setDateFilter] = useState<DateFilterType>("all");
@@ -226,6 +231,7 @@ export function TripFeedScreen() {
     setDateFilter("all");
     setWomenOnly(false);
     setRoundTripOnly(false);
+    setFocusedInput(null);
   };
 
   const swapOriginAndDest = () => {
@@ -235,9 +241,11 @@ export function TripFeedScreen() {
     setOriginPin(destPin);
     setDestText(tempOText);
     setDestPin(tempOPin);
+    setFocusedInput(null);
   };
 
   const openMapPicker = (target: "origin" | "dest") => {
+    setFocusedInput(null);
     setTempPickedPoint(target === "origin" ? originPin : destPin);
     setMapPickerTarget(target);
   };
@@ -252,6 +260,18 @@ export function TripFeedScreen() {
     }
     setMapPickerTarget(null);
     setTempPickedPoint(null);
+  };
+
+  const selectOriginSuggestion = (item: GeocodeResult) => {
+    setOriginPin(item);
+    setOriginText(item.label);
+    setFocusedInput(null);
+  };
+
+  const selectDestSuggestion = (item: GeocodeResult) => {
+    setDestPin(item);
+    setDestText(item.label);
+    setFocusedInput(null);
   };
 
   return (
@@ -294,9 +314,15 @@ export function TripFeedScreen() {
                 placeholder="Pickup City, Area or Highway Stop..."
                 placeholderTextColor={colors.inkSubtle}
                 value={originPin ? originPin.label : originText}
+                onFocus={() => {
+                  setFocusedInput("origin");
+                  if (originText.trim()) originGeocode.search(originText);
+                }}
                 onChangeText={(t) => {
                   setOriginText(t);
                   if (originPin) setOriginPin(null);
+                  setFocusedInput("origin");
+                  originGeocode.search(t);
                 }}
               />
               {originPin || originText ? (
@@ -304,6 +330,7 @@ export function TripFeedScreen() {
                   onPress={() => {
                     setOriginPin(null);
                     setOriginText("");
+                    setFocusedInput(null);
                   }}
                   style={styles.clearBtn}
                 >
@@ -330,9 +357,15 @@ export function TripFeedScreen() {
                 placeholder="Destination (e.g., Manali, Kasol, Goa)..."
                 placeholderTextColor={colors.inkSubtle}
                 value={destPin ? destPin.label : destText}
+                onFocus={() => {
+                  setFocusedInput("dest");
+                  if (destText.trim()) destGeocode.search(destText);
+                }}
                 onChangeText={(t) => {
                   setDestText(t);
                   if (destPin) setDestPin(null);
+                  setFocusedInput("dest");
+                  destGeocode.search(t);
                 }}
               />
               {destPin || destText ? (
@@ -340,6 +373,7 @@ export function TripFeedScreen() {
                   onPress={() => {
                     setDestPin(null);
                     setDestText("");
+                    setFocusedInput(null);
                   }}
                   style={styles.clearBtn}
                 >
@@ -363,6 +397,73 @@ export function TripFeedScreen() {
             <Text style={styles.swapBtnText}>⇅</Text>
           </Pressable>
         </View>
+
+        {/* Live Map Autocomplete Suggestions Dropdown */}
+        {focusedInput === "origin" && (originGeocode.searching || originGeocode.results.length > 0) && (
+          <View style={styles.suggestionsContainer}>
+            <View style={styles.suggestionsHeader}>
+              <Text style={styles.suggestionsHeaderTitle}>
+                {originGeocode.searching ? "🔍 Searching Maps..." : "📍 Map Suggestions (Sets Exact Pin)"}
+              </Text>
+              <Pressable onPress={() => setFocusedInput(null)}>
+                <Text style={styles.suggestionsCloseText}>Close</Text>
+              </Pressable>
+            </View>
+            {originGeocode.results.map((item: GeocodeResult, idx: number) => (
+              <Pressable
+                key={`${item.lat}-${item.lng}-${idx}`}
+                style={({ pressed }) => [styles.suggestionItem, pressed && styles.suggestionItemPressed]}
+                onPress={() => selectOriginSuggestion(item)}
+              >
+                <Text style={styles.suggestionItemIcon}>📍</Text>
+                <View style={styles.suggestionItemContent}>
+                  <Text style={styles.suggestionItemTitle} numberOfLines={1}>
+                    {item.label.split(",")[0]}
+                  </Text>
+                  <Text style={styles.suggestionItemSubtitle} numberOfLines={1}>
+                    {item.label}
+                  </Text>
+                </View>
+                <View style={styles.setPinBadge}>
+                  <Text style={styles.setPinBadgeText}>Set Pin</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        )}
+
+        {focusedInput === "dest" && (destGeocode.searching || destGeocode.results.length > 0) && (
+          <View style={styles.suggestionsContainer}>
+            <View style={styles.suggestionsHeader}>
+              <Text style={styles.suggestionsHeaderTitle}>
+                {destGeocode.searching ? "🔍 Searching Maps..." : "🎯 Map Suggestions (Sets Exact Pin)"}
+              </Text>
+              <Pressable onPress={() => setFocusedInput(null)}>
+                <Text style={styles.suggestionsCloseText}>Close</Text>
+              </Pressable>
+            </View>
+            {destGeocode.results.map((item: GeocodeResult, idx: number) => (
+              <Pressable
+                key={`${item.lat}-${item.lng}-${idx}`}
+                style={({ pressed }) => [styles.suggestionItem, pressed && styles.suggestionItemPressed]}
+                onPress={() => selectDestSuggestion(item)}
+              >
+                <Text style={styles.suggestionItemIcon}>🎯</Text>
+                <View style={styles.suggestionItemContent}>
+                  <Text style={styles.suggestionItemTitle} numberOfLines={1}>
+                    {item.label.split(",")[0]}
+                  </Text>
+                  <Text style={styles.suggestionItemSubtitle} numberOfLines={1}>
+                    {item.label}
+                  </Text>
+                </View>
+                <View style={styles.setPinBadge}>
+                  <Text style={styles.setPinBadgeText}>Set Pin</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        )}
 
         {/* Pin Location Badges */}
         {(originPin || destPin) && (
@@ -715,6 +816,84 @@ const styles = StyleSheet.create({
     color: colors.inkMuted,
     fontWeight: "700",
   },
+
+  // Map Autocomplete Suggestions
+  suggestionsContainer: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+    padding: spacing.xs,
+    overflow: "hidden",
+  },
+  suggestionsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.lineLight,
+  },
+  suggestionsHeaderTitle: {
+    ...typography.overline,
+    color: colors.inkSoft,
+    fontSize: 10.5,
+  },
+  suggestionsCloseText: {
+    ...typography.captionBold,
+    color: colors.inkSubtle,
+    fontSize: 11,
+  },
+  suggestionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.paper,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: colors.lineLight,
+  },
+  suggestionItemPressed: {
+    backgroundColor: colors.canvasSubtle,
+  },
+  suggestionItemIcon: {
+    fontSize: 14,
+    marginRight: spacing.sm,
+  },
+  suggestionItemContent: {
+    flex: 1,
+  },
+  suggestionItemTitle: {
+    ...typography.bodyMedium,
+    color: colors.ink,
+    fontWeight: "600",
+    fontSize: 13,
+  },
+  suggestionItemSubtitle: {
+    ...typography.caption,
+    color: colors.inkSoft,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  setPinBadge: {
+    backgroundColor: colors.trustLight,
+    paddingHorizontal: spacing.xs + 2,
+    paddingVertical: 3,
+    borderRadius: radius.xs,
+    borderWidth: 1,
+    borderColor: colors.trust,
+    marginLeft: spacing.xs,
+  },
+  setPinBadgeText: {
+    ...typography.captionBold,
+    color: colors.trust,
+    fontSize: 10,
+  },
+
   pinBadgesRow: {
     marginTop: spacing.sm,
     paddingTop: spacing.xs,
