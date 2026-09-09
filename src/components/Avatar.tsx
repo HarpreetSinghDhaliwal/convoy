@@ -51,6 +51,7 @@ export function Avatar({
   style,
 }: AvatarProps) {
   const numericSize = typeof size === "number" ? size : SIZE_MAP[size] || 44;
+  const [imgLoadError, setImgLoadError] = React.useState(false);
 
   const rawIdentifier = (name || email || "User").trim();
   // Find first alphanumeric character for crisp initials, falling back to first char
@@ -62,11 +63,24 @@ export function Avatar({
   const palette = getPalette(rawIdentifier);
   const fontSize = Math.round(numericSize * 0.44);
 
+  // Check if uri is a valid web or local image URL (not an emoji or invalid string)
+  const isHttpOrDataUrl =
+    typeof uri === "string" &&
+    uri.trim().length > 5 &&
+    (uri.startsWith("http://") ||
+      uri.startsWith("https://") ||
+      uri.startsWith("data:") ||
+      uri.startsWith("file:") ||
+      uri.startsWith("blob:"));
+
+  const shouldRenderImage = isHttpOrDataUrl && !imgLoadError;
+
   return (
     <View style={[{ width: numericSize, height: numericSize }, styles.container, style]}>
-      {uri ? (
+      {shouldRenderImage ? (
         <Image
-          source={{ uri }}
+          source={{ uri: uri!.trim() }}
+          onError={() => setImgLoadError(true)}
           style={[
             styles.image,
             { width: numericSize, height: numericSize, borderRadius: numericSize / 2 },

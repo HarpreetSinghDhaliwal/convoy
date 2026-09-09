@@ -30,7 +30,12 @@ export function ChatsHubScreen() {
   }
 
   return (
-    <Screen title="Chats & Assistant">
+    <Screen
+      showBack
+      title="Chats & Assistant"
+      showNavBar
+      onBack={() => (router.canGoBack() ? router.back() : router.push("/"))}
+    >
       {/* Top Segmented Tab Switcher */}
       <View style={styles.tabBar}>
         <Pressable

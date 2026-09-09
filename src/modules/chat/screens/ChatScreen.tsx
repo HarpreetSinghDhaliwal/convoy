@@ -260,7 +260,12 @@ export function ChatScreen() {
   }
 
   return (
-    <Screen showBack title={chatTitle} rightAction={<SosButton tripId={tripId} />}>
+    <Screen
+      showBack
+      title={chatTitle}
+      onBack={() => (router.canGoBack() ? router.back() : router.push("/messages"))}
+      rightAction={<SosButton tripId={tripId} />}
+    >
       {/* Trip Info & Group Control Banner */}
       {trip && (
         <View style={styles.tripHeaderCard}>

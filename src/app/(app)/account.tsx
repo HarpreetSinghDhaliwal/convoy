@@ -85,14 +85,12 @@ export default function Account() {
         {/* Profile Hero Card */}
         <Card style={styles.profileCard}>
           <View style={styles.profileHeader}>
-            <View style={styles.avatarWrap}>
-              <Text style={styles.avatarEmoji}>{displayAvatar}</Text>
-              {isVerified && (
-                <View style={styles.verifiedDot}>
-                  <Text style={styles.verifiedDotText}>✓</Text>
-                </View>
-              )}
-            </View>
+            <Avatar
+              name={displayName}
+              uri={profile?.photoUrl}
+              size="lg"
+              isVerified={isVerified}
+            />
 
             <View style={styles.profileInfo}>
               <Text style={styles.nameText} numberOfLines={1}>{displayName}</Text>
